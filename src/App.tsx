@@ -1,6 +1,11 @@
 import React, { useState, useEffect } from "react";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import { Logo } from "./components/Logo";
+import { AnimatedNumber } from "./components/AnimatedNumber";
+import { LanguageSwitcher, LanguageCode } from "./components/LanguageSwitcher";
+import { TRANSLATIONS } from "./utils/translations";
+import { TestimonialCarousel } from "./components/TestimonialCarousel";
+import { Sun, Moon } from "lucide-react";
 import {
   Monitor,
   Cpu,
@@ -66,7 +71,7 @@ export default function App() {
   const [selectedService, setSelectedService] = useState<ServiceItem | null>(null);
   
   // Interactive ROI Calculator states
-  const [calcTier, setCalcTier] = useState<"landing" | "business" | "school_church_portal">("business");
+  const [calcTier, setCalcTier] = useState<"landing" | "business" | "school_church_portal" | "enterprise">("business");
   const [calcAddons, setCalcAddons] = useState<string[]>(["whatsapp_bot", "customer_care"]);
   const [calcVolume, setCalcVolume] = useState<number>(300); // inbound requests per week
   const [calcStaffSize, setCalcStaffSize] = useState<number>(3); // admin agents
@@ -77,14 +82,25 @@ export default function App() {
   // FAQ Section states
   const [faqSearch, setFaqSearch] = useState("");
   const [faqCategory, setFaqCategory] = useState<string>("All");
-  const [expandedFaqIndex, setExpandedFaqIndex] = useState<number | null>(null);
+  const [expandedFaqId, setExpandedFaqId] = useState<string | null>(null);
 
   // Leads submission state
   const [bookingName, setBookingName] = useState("");
   const [bookingCompany, setBookingCompany] = useState("");
   const [bookingPhone, setBookingPhone] = useState("");
+  const [bookingEmail, setBookingEmail] = useState("");
   const [bookingService, setBookingService] = useState("web_and_ai_combo");
   const [bookingSubmitted, setBookingSubmitted] = useState(false);
+
+  // Global Language & Theme requested states
+  const [lang, setLang] = useState<LanguageCode>("en");
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+
+  // Real-time form field errors
+  const [bookingEmailError, setBookingEmailError] = useState<string | null>(null);
+  const [bookingPhoneError, setBookingPhoneError] = useState<string | null>(null);
+  const [strategyEmailError, setStrategyEmailError] = useState<string | null>(null);
+  const [strategyPhoneError, setStrategyPhoneError] = useState<string | null>(null);
 
   // Clipboard feedback state & custom Toast system
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
@@ -98,6 +114,74 @@ export default function App() {
     }, 4000); // 4 seconds auto-dismiss
   };
 
+  // Helper to visually highlight search terms inside a text string
+  const highlightText = (text: string, search: string) => {
+    if (!search || !search.trim()) return <span>{text}</span>;
+    try {
+      const escaped = search.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&");
+      const regex = new RegExp(`(${escaped})`, "gi");
+      const parts = text.split(regex);
+      return (
+        <span>
+          {parts.map((part, index) => 
+            regex.test(part) ? (
+              <mark key={index} className="bg-orange-500/25 text-orange-400 font-bold px-0.5 rounded">
+                {part}
+              </mark>
+            ) : (
+              part
+            )
+          )}
+        </span>
+      );
+    } catch (e) {
+      return <span>{text}</span>;
+    }
+  };
+
+  // Helper to generate a URL slug for deep linking
+  const getFAQHash = (question: string) => {
+    return "faq-" + question
+      .toLowerCase()
+      .replace(/[^\w\s-]/g, "")
+      .trim()
+      .replace(/\s+/g, "-");
+  };
+
+  // Handler to copy direct link and update URL hash
+  const handleShareFAQ = (question: string) => {
+    const hash = getFAQHash(question);
+    window.location.hash = hash;
+    const fullURL = `${window.location.origin}${window.location.pathname}#${hash}`;
+    navigator.clipboard.writeText(fullURL).then(() => {
+      addToast("Direct link copied to clipboard & updated URL!", "success");
+    }).catch(() => {
+      addToast("Failed to copy link.", "info");
+    });
+  };
+
+  // Monitor hash change on mount/change for deep-linking directly to a FAQ
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash;
+      if (hash && hash.startsWith("#faq-")) {
+        const matches = GENERAL_FAQS.find(faq => getFAQHash(faq.question) === hash.slice(1));
+        if (matches) {
+          setExpandedFaqId(matches.question);
+          setTimeout(() => {
+            const el = document.getElementById(getFAQHash(matches.question));
+            if (el) {
+              el.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
+          }, 400);
+        }
+      }
+    };
+    handleHashChange();
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
+
   // Strategic proposal tabs
   const [auditTab, setAuditTab] = useState<"all" | "critical" | "high">("all");
   
@@ -109,6 +193,45 @@ export default function App() {
     setTimeout(() => setCopyFeedback(null), 2000);
   };
 
+  // Helper validation functions
+  const validateEmail = (email: string) => {
+    const trimmed = email.trim();
+    if (!trimmed) return "Email address is required";
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmed)) return "Enter a valid email (e.g., manager@domain.ng)";
+    return null;
+  };
+
+  const validatePhone = (phone: string) => {
+    const trimmed = phone.trim();
+    if (!trimmed) return "Phone number is required";
+    const digits = trimmed.replace(/\D/g, "");
+    if (digits.length < 9 || digits.length > 14) {
+      return "Nigerian phone numbers must be between 9 and 14 digits";
+    }
+    return null;
+  };
+
+  const handleStrategyEmailChange = (val: string) => {
+    setContactEmail(val);
+    setStrategyEmailError(validateEmail(val));
+  };
+
+  const handleStrategyPhoneChange = (val: string) => {
+    setContactPhone(val);
+    setStrategyPhoneError(validatePhone(val));
+  };
+
+  const handleBookingEmailChange = (val: string) => {
+    setBookingEmail(val);
+    setBookingEmailError(validateEmail(val));
+  };
+
+  const handleBookingPhoneChange = (val: string) => {
+    setBookingPhone(val);
+    setBookingPhoneError(validatePhone(val));
+  };
+
   // Pre-configured custom WhatsApp message generator helper
   const getWhatsAppURL = (messageText: string) => {
     const encoded = encodeURIComponent(messageText);
@@ -118,6 +241,23 @@ export default function App() {
   // Interactive AI Strategist generator trigger
   const generateProposal = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Client-side validation: ensure mandatory fields are filled
+    if (!businessName.trim()) {
+      addToast("Please fill in the Business Name / Identity.", "info");
+      return;
+    }
+
+    const pError = validatePhone(contactPhone);
+    const eError = validateEmail(contactEmail);
+
+    if (pError || eError) {
+      setStrategyPhoneError(pError);
+      setStrategyEmailError(eError);
+      addToast("Please correct the form validation errors before generating.", "info");
+      return;
+    }
+
     setIsAiLoading(true);
     setAiProposal("");
 
@@ -129,7 +269,7 @@ export default function App() {
           businessName,
           industry,
           painPoint,
-          contactEmail,
+          contactEmail: contactEmail.trim(),
           contactPhone,
         }),
       });
@@ -141,7 +281,7 @@ export default function App() {
       }
     } catch (err: any) {
       setAiProposal(`### 💡 THE CORE DIAGNOSIS & OPPORTUNITY
-For your **${industry}** industry operations, the pain point **"${painPoint}"** represents an immediate leakage of potential revenues.
+For your **${industry}** operations, the pain point **"${painPoint}"** represents an immediate leakage of potential revenues.
 
 *Note: Live backend connection timed out or is running offline fallback.*
 
@@ -154,6 +294,33 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
     } finally {
       setIsAiLoading(false);
     }
+  };
+
+  // Client-side validated submission handler for the Strategy Call form
+  const handleBookingSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!bookingName.trim()) {
+      addToast("Please fill in your name.", "info");
+      return;
+    }
+    if (!bookingCompany.trim()) {
+      addToast("Please fill in your School / SME Name.", "info");
+      return;
+    }
+
+    const pError = validatePhone(bookingPhone);
+    const eError = validateEmail(bookingEmail);
+
+    if (pError || eError) {
+      setBookingPhoneError(pError);
+      setBookingEmailError(eError);
+      addToast("Please correct the form fields with errors before submitting.", "info");
+      return;
+    }
+
+    setBookingSubmitted(true);
+    addToast("Strategy audit request submitted successfully!", "success");
   };
 
   // ROI computations
@@ -177,6 +344,11 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
         basePriceNaira = 750000;
         baseTimeSavedHrs = 35;
         baseDescription = "Custom Specialized Web Portal";
+        break;
+      case "enterprise":
+        basePriceNaira = 1400000;
+        baseTimeSavedHrs = 75;
+        baseDescription = "Enterprise Intelligent Integration";
         break;
     }
 
@@ -206,7 +378,13 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
       }
     });
 
-    const totalInvestment = basePriceNaira + extraNaira;
+    let totalInvestment = basePriceNaira + extraNaira;
+    let discountApplied = 0;
+    if (calcTier === "enterprise") {
+      discountApplied = Math.round(totalInvestment * 0.1);
+      totalInvestment = totalInvestment - discountApplied;
+    }
+
     const totalHoursSavedMonthly = parseFloat((baseTimeSavedHrs + (extraTimeSavedHrs * 4)).toFixed(1));
     const adminHourlyCost = 2500; // Average cost/value per hour in Nigeria for admin staff (₦2500/hr)
     const financialSavingsMonthly = totalHoursSavedMonthly * adminHourlyCost;
@@ -218,7 +396,9 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
       totalHoursSavedMonthly,
       financialSavingsMonthly,
       conversionsCapturedWeekly,
-      leadBoostPercent
+      leadBoostPercent,
+      originalInvestment: basePriceNaira + extraNaira,
+      discountApplied
     };
   };
 
@@ -307,6 +487,65 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
 
   // Inject the live JSON-LD schema into the document head for index crawler authority
   useEffect(() => {
+    let finalSchema = { ...dynamicSchema };
+    let isValid = true;
+
+    try {
+      const faqNode = dynamicSchema["@graph"]?.find(item => item["@type"] === "FAQPage") as { mainEntity?: any[] } | undefined;
+      const entities = faqNode?.mainEntity;
+
+      if (!Array.isArray(entities) || entities.length === 0) {
+        isValid = false;
+      } else {
+        // Validate that each question and answer exists, is a string, and is non-empty
+        for (const entity of entities) {
+          if (
+            !entity ||
+            typeof entity.name !== "string" ||
+            entity.name.trim() === "" ||
+            !entity.acceptedAnswer ||
+            typeof entity.acceptedAnswer.text !== "string" ||
+            entity.acceptedAnswer.text.trim() === ""
+          ) {
+            isValid = false;
+            break;
+          }
+        }
+      }
+    } catch (e) {
+      isValid = false;
+    }
+
+    if (!isValid) {
+      console.warn("FAQPage schema validation failed - adopting default fallback state");
+      // Define a secure, non-empty schema fallback
+      const fallbackFAQEntities = [
+        {
+          "@type": "Question",
+          "name": "How long does it take 3Cords to build a premium business portal?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "A standard elite custom landing page or modular business site is engineered, optimized, and ready for deployment within 7 to 14 working days."
+          }
+        }
+      ];
+
+      finalSchema = {
+        ...dynamicSchema,
+        "@graph": dynamicSchema["@graph"].map(item => {
+          if (item["@type"] === "FAQPage") {
+            return {
+              "@type": "FAQPage",
+              "mainEntity": fallbackFAQEntities
+            };
+          }
+          return item;
+        })
+      };
+    }
+
+    const validatedSchemaCode = JSON.stringify(finalSchema, null, 2);
+
     let script = document.getElementById("jsonld-schema") as HTMLScriptElement;
     if (!script) {
       script = document.createElement("script");
@@ -314,7 +553,7 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
       script.type = "application/ld+json";
       document.head.appendChild(script);
     }
-    script.textContent = schemaCode;
+    script.textContent = validatedSchemaCode;
     return () => {
       const existing = document.getElementById("jsonld-schema");
       if (existing) {
@@ -324,7 +563,11 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
   }, [schemaCode]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col relative animate-fade-in">
+    <div className={`min-h-screen flex flex-col relative animate-fade-in transition-colors duration-300 ${
+      theme === "dark" 
+        ? "bg-slate-950 text-slate-100" 
+        : "bg-slate-50 text-slate-900"
+    }`}>
       
       {/* BACKGROUND DECORATIONS IN LOGO-INSPIRED ORANGE ACCENTS */}
       <div className="absolute top-0 left-0 right-0 h-[700px] bg-gradient-to-b from-orange-950/20 via-transparent to-transparent pointer-events-none z-0" />
@@ -352,18 +595,28 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
       </div>
 
       {/* MAIN NAVIGATION ROW */}
-      <header className="border-b border-slate-900/80 bg-slate-950/80 backdrop-blur-md sticky top-[33px] z-40 transition-all">
+      <header className={`border-b sticky top-[33px] z-40 transition-all backdrop-blur-md ${
+        theme === "dark" 
+          ? "border-slate-900/80 bg-slate-950/80" 
+          : "border-slate-200 bg-white/85"
+      }`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
           <Logo showText={true} />
 
           {/* MAIN DESKTOP DIRECT SWITCH / TABS */}
-          <div className="hidden md:flex bg-slate-900/90 rounded-full p-1 border border-slate-800/85">
+          <div className={`hidden md:flex rounded-full p-1 border ${
+            theme === "dark" 
+              ? "bg-slate-900/90 border-slate-800/85" 
+              : "bg-slate-100 border-slate-300"
+          }`}>
             <button
               onClick={() => setActiveWorkspace("redesign")}
               className={`px-5 py-1.5 rounded-full text-sm font-semibold transition-all flex items-center gap-2 ${
                 activeWorkspace === "redesign"
                   ? "bg-gradient-to-r from-orange-500 via-orange-600 to-amber-600 text-slate-950 font-bold shadow-md shadow-orange-950/20"
-                  : "text-slate-300 hover:text-white"
+                  : theme === "dark" 
+                    ? "text-slate-300 hover:text-white"
+                    : "text-slate-600 hover:text-slate-900"
               }`}
             >
               <Sparkles className="w-4 h-4" />
@@ -374,7 +627,9 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
               className={`px-5 py-1.5 rounded-full text-sm font-semibold transition-all flex items-center gap-2 ${
                 activeWorkspace === "strategist"
                   ? "bg-gradient-to-r from-orange-500 via-orange-600 to-amber-600 text-slate-950 font-bold shadow-md shadow-orange-950/20"
-                  : "text-slate-300 hover:text-white"
+                  : theme === "dark" 
+                    ? "text-slate-300 hover:text-white"
+                    : "text-slate-600 hover:text-slate-900"
               }`}
             >
               <Layers className="w-4 h-4" />
@@ -383,6 +638,22 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
           </div>
 
           <div className="hidden lg:flex items-center gap-4">
+            {/* Language Switcher */}
+            <LanguageSwitcher currentLanguage={lang} onLanguageChange={setLang} />
+
+            {/* Theme Toggle */}
+            <button
+              onClick={() => setTheme(prev => prev === "light" ? "dark" : "light")}
+              className={`p-2 rounded-xl border transition-all ${
+                theme === "dark"
+                  ? "border-slate-800 bg-slate-900 text-amber-400 hover:text-amber-300"
+                  : "border-slate-300 bg-white text-slate-700 hover:text-orange-500"
+              }`}
+              title={theme === "light" ? "Switch to Dark Mode" : "Switch to Light Mode"}
+            >
+              {theme === "light" ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
+            </button>
+
             <a
               href={getWhatsAppURL("Hello 3Cords. I am viewing your revised website proposal. Let's arrange a free technology consultation.")}
               target="_blank"
@@ -400,7 +671,7 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
                   document.getElementById("strategy-call")?.scrollIntoView({ behavior: "smooth" });
                 }, 100);
               }}
-              className="px-4 py-2 bg-white text-slate-950 font-bold rounded-lg text-sm hover:bg-slate-200 transition-all shadow-md shadow-white/5 active:scale-95 duration-100"
+              className="px-4 py-2 bg-gradient-to-r from-orange-500 to-amber-500 text-white font-bold rounded-lg text-sm hover:opacity-90 transition-all shadow-md active:scale-95 duration-100"
             >
               Book Strategy Call
             </a>
@@ -416,68 +687,97 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
         </div>
 
         {/* Mobile Flyout Menu */}
-        {mobileMenuOpen && (
-          <div className="md:hidden border-t border-slate-900 bg-slate-950 p-4 space-y-4 shadow-xl">
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => {
-                  setActiveWorkspace("redesign");
-                  setMobileMenuOpen(false);
-                }}
-                className={`p-3 rounded-xl text-xs font-bold text-center border transition-all ${
-                  activeWorkspace === "redesign"
-                    ? "bg-slate-900 border-orange-500 text-orange-400"
-                    : "border-slate-900 text-slate-400"
-                }`}
-              >
-                🌐 Redesign App Preview
-              </button>
-              <button
-                onClick={() => {
-                  setActiveWorkspace("strategist");
-                  setMobileMenuOpen(false);
-                }}
-                className={`p-3 rounded-xl text-xs font-bold text-center border transition-all ${
-                  activeWorkspace === "strategist"
-                    ? "bg-slate-900 border-orange-500 text-orange-400"
-                    : "border-slate-900 text-slate-400"
-                }`}
-              >
-                📊 Strategy Deliverables
-              </button>
-            </div>
-            <div className="laser-line" />
-            <div className="space-y-2">
-              <p className="text-[10px] uppercase font-mono tracking-widest text-slate-500 font-semibold px-2">Quick Navigation Links</p>
-              {activeWorkspace === "redesign" ? (
-                <>
-                  <a href="#services-sect" onClick={() => setMobileMenuOpen(false)} className="block py-2 px-3 hover:bg-slate-900 rounded-lg text-sm">Services Grid</a>
-                  <a href="#case-studies-sect" onClick={() => setMobileMenuOpen(false)} className="block py-2 px-3 hover:bg-slate-900 rounded-lg text-sm">Case Studies</a>
-                  <a href="#roi-calc-sect" onClick={() => setMobileMenuOpen(false)} className="block py-2 px-3 hover:bg-slate-900 rounded-lg text-sm">Interactive Cost Estimator</a>
-                  <a href="#ai-consulting-sect" onClick={() => setMobileMenuOpen(false)} className="block py-2 px-3 hover:bg-slate-900 rounded-lg text-sm">Live AI Strategy Tool</a>
-                  <a href="#faq" onClick={() => setMobileMenuOpen(false)} className="block py-2 px-3 hover:bg-slate-900 rounded-lg text-sm">Redesign FAQ</a>
-                </>
-              ) : (
-                <>
-                  <a href="#brutal-audit" onClick={() => setMobileMenuOpen(false)} className="block py-2 px-3 hover:bg-slate-900 rounded-lg text-sm">Brutal Core Audit</a>
-                  <a href="#seo-strategy" onClick={() => setMobileMenuOpen(false)} className="block py-2 px-3 hover:bg-slate-900 rounded-lg text-sm">SEO Architecture</a>
-                  <a href="#architecture-wireframe" onClick={() => setMobileMenuOpen(false)} className="block py-2 px-3 hover:bg-slate-900 rounded-lg text-sm">Wireframes Blueprint</a>
-                  <a href="#transformation-roadmap" onClick={() => setMobileMenuOpen(false)} className="block py-2 px-3 hover:bg-slate-900 rounded-lg text-sm">30-Day Conversion Roadmap</a>
-                </>
-              )}
-            </div>
-            <div className="pt-2">
-              <a
-                href={getWhatsAppURL("Hello, I would like to schedule a technology system review for my business.")}
-                target="_blank"
-                rel="noreferrer"
-                className="w-full py-3 bg-orange-500 hover:bg-orange-600 text-slate-950 font-bold rounded-lg text-center block text-sm shadow-md"
-              >
-                WhatsApp Direct Hotline (🇳🇬)
-              </a>
-            </div>
-          </div>
-        )}
+        <AnimatePresence>
+          {mobileMenuOpen && (
+            <motion.div
+              initial={{ height: 0, opacity: 0, y: -10 }}
+              animate={{ height: "auto", opacity: 1, y: 0 }}
+              exit={{ height: 0, opacity: 0, y: -10 }}
+              transition={{ duration: 0.3, ease: "easeInOut" }}
+              style={{ overflow: "hidden" }}
+              className={`md:hidden border-t p-4 space-y-4 shadow-xl transition-all ${
+                theme === "dark" ? "border-slate-900 bg-slate-950/95 backdrop-blur-md" : "border-slate-200 bg-white/95 backdrop-blur-md text-slate-900"
+              }`}
+            >
+              {/* Mobile Quick Settings Row */}
+              <div className="flex items-center justify-between px-2 pb-2 border-b border-slate-800/20">
+                <span className="text-xs font-mono text-slate-400 uppercase font-bold tracking-wider">Quick Settings</span>
+                <div className="flex items-center gap-2">
+                  <LanguageSwitcher currentLanguage={lang} onLanguageChange={setLang} />
+                  <button
+                    onClick={() => setTheme(prev => prev === "light" ? "dark" : "light")}
+                    className={`p-2 rounded-xl border transition-all ${
+                      theme === "dark"
+                        ? "border-slate-850 bg-slate-900 text-amber-400"
+                        : "border-slate-300 bg-slate-100 text-slate-700"
+                    }`}
+                  >
+                    {theme === "light" ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => {
+                    setActiveWorkspace("redesign");
+                    setMobileMenuOpen(false);
+                  }}
+                  className={`p-3 rounded-xl text-xs font-bold text-center border transition-all ${
+                    activeWorkspace === "redesign"
+                      ? "bg-slate-900 border-orange-500 text-orange-400"
+                      : "border-slate-900 text-slate-400"
+                  }`}
+                >
+                  🌐 Redesign App Preview
+                </button>
+                <button
+                  onClick={() => {
+                    setActiveWorkspace("strategist");
+                    setMobileMenuOpen(false);
+                  }}
+                  className={`p-3 rounded-xl text-xs font-bold text-center border transition-all ${
+                    activeWorkspace === "strategist"
+                      ? "bg-slate-900 border-orange-500 text-orange-400"
+                      : "border-slate-900 text-slate-400"
+                  }`}
+                >
+                  📊 Strategy Deliverables
+                </button>
+              </div>
+              <div className="laser-line" />
+              <div className="space-y-2">
+                <p className="text-[10px] uppercase font-mono tracking-widest text-slate-500 font-semibold px-2">Quick Navigation Links</p>
+                {activeWorkspace === "redesign" ? (
+                  <>
+                    <a href="#services-sect" onClick={() => setMobileMenuOpen(false)} className="block py-2 px-3 hover:bg-slate-900 rounded-lg text-sm">Services Grid</a>
+                    <a href="#case-studies-sect" onClick={() => setMobileMenuOpen(false)} className="block py-2 px-3 hover:bg-slate-900 rounded-lg text-sm">Case Studies</a>
+                    <a href="#roi-calc-sect" onClick={() => setMobileMenuOpen(false)} className="block py-2 px-3 hover:bg-slate-900 rounded-lg text-sm">Interactive Cost Estimator</a>
+                    <a href="#ai-consulting-sect" onClick={() => setMobileMenuOpen(false)} className="block py-2 px-3 hover:bg-slate-900 rounded-lg text-sm">Live AI Strategy Tool</a>
+                    <a href="#faq" onClick={() => setMobileMenuOpen(false)} className="block py-2 px-3 hover:bg-slate-900 rounded-lg text-sm">Redesign FAQ</a>
+                  </>
+                ) : (
+                  <>
+                    <a href="#brutal-audit" onClick={() => setMobileMenuOpen(false)} className="block py-2 px-3 hover:bg-slate-900 rounded-lg text-sm">Brutal Core Audit</a>
+                    <a href="#seo-strategy" onClick={() => setMobileMenuOpen(false)} className="block py-2 px-3 hover:bg-slate-900 rounded-lg text-sm">SEO Architecture</a>
+                    <a href="#architecture-wireframe" onClick={() => setMobileMenuOpen(false)} className="block py-2 px-3 hover:bg-slate-900 rounded-lg text-sm">Wireframes Blueprint</a>
+                    <a href="#transformation-roadmap" onClick={() => setMobileMenuOpen(false)} className="block py-2 px-3 hover:bg-slate-900 rounded-lg text-sm">30-Day Conversion Roadmap</a>
+                  </>
+                )}
+              </div>
+              <div className="pt-2">
+                <a
+                  href={getWhatsAppURL("Hello, I would like to schedule a technology system review for my business.")}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="w-full py-3 bg-orange-500 hover:bg-orange-600 text-slate-950 font-bold rounded-lg text-center block text-sm shadow-md"
+                >
+                  WhatsApp Direct Hotline (🇳🇬)
+                </a>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </header>
 
 
@@ -496,21 +796,21 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
               <div className="flex justify-center mb-6">
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-400 text-xs font-medium tracking-tight">
                   <span className="flex h-2 w-2 rounded-full bg-orange-400 animate-pulse" />
-                  Redefining Digital Scale for Lagos Schools, Businesses & Churches
+                  {TRANSLATIONS[lang].hero_badge}
                 </div>
               </div>
 
               {/* Display Header Copy */}
               <div className="text-center max-w-4xl mx-auto space-y-6">
                 <h1 className="text-4xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight text-white leading-tight">
-                  Stop Losing Leads. <br />
+                  {TRANSLATIONS[lang].hero_title_1} <br />
                   <span className="text-transparent bg-clip-text bg-gradient-to-r from-orange-500 via-amber-500 to-yellow-500 glow-orange">
-                    Automate Your Growth
+                    {TRANSLATIONS[lang].hero_title_2}
                   </span>
                 </h1>
                 
                 <p className="text-lg sm:text-xl text-slate-400 max-w-2xl mx-auto font-normal leading-relaxed">
-                  3Cords System constructs clean, ultra-speed mobile architectures & automated AI assistant solutions. Turn chaotic manual operations into a 24/7 client converting engine.
+                  {TRANSLATIONS[lang].hero_desc}
                 </p>
 
                 {/* Conversion Trigger Box */}
@@ -558,10 +858,10 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
             {/* INTEGRATED SERVICES GRID SECTION */}
             <section id="services-sect" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-12">
               <div className="text-center space-y-3">
-                <span className="text-xs font-mono text-orange-400 uppercase tracking-widest font-bold">CORE PRODUCT SERVICE LINES</span>
-                <h2 className="text-3xl md:text-5xl font-bold text-white">We Solve Operational Friction</h2>
+                <span className="text-xs font-mono text-orange-400 uppercase tracking-widest font-bold">{TRANSLATIONS[lang].services_badge}</span>
+                <h2 className="text-3xl md:text-5xl font-bold text-white">{TRANSLATIONS[lang].services_title}</h2>
                 <p className="text-slate-400 max-w-xl mx-auto text-sm">
-                  Leverage elite web architecture styled for command and autonomous AI scripts calibrated to save up to 140 administrative human hours monthly.
+                  {TRANSLATIONS[lang].services_desc}
                 </p>
               </div>
 
@@ -704,10 +1004,10 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
             {/* BEFORE & AFTER CLIENT TRANSFORMATION CASE STUDIES */}
             <section id="case-studies-sect" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-12">
               <div className="text-center space-y-2">
-                <span className="text-xs font-mono text-emerald-400 uppercase tracking-widest font-bold">CLIENT PROOF INDICATORS</span>
-                <h2 className="text-3xl md:text-5xl font-bold text-white">Lagos Business Transformations</h2>
+                <span className="text-xs font-mono text-emerald-400 uppercase tracking-widest font-bold">{TRANSLATIONS[lang].case_studies_badge}</span>
+                <h2 className="text-3xl md:text-5xl font-bold text-white">{TRANSLATIONS[lang].case_studies_title}</h2>
                 <p className="text-slate-400 max-w-xl mx-auto text-sm">
-                  We don't deal in vague 'brand promises'. Read the actual metrics of local organizations automated by our dual-stack implementations.
+                  {TRANSLATIONS[lang].case_studies_desc}
                 </p>
               </div>
 
@@ -826,15 +1126,24 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
               </div>
             </section>
 
+            {/* CLIENT ENDORSEMENT TESTIMONIAL CAROUSEL */}
+            <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+              <div className="text-center space-y-2 mb-4">
+                <span className="text-xs font-mono text-orange-400 uppercase tracking-widest font-bold">CLIENT ENDORSEMENTS</span>
+                <h2 className="text-2xl md:text-4xl font-bold text-white">Trust is Built on Actual Success</h2>
+              </div>
+              <TestimonialCarousel />
+            </section>
+
             <div className="laser-line max-w-7xl mx-auto" />
 
             {/* DYNAMIC INTERACTIVE ROI CALCULATOR & CO-ESTIMATOR */}
             <section id="roi-calc-sect" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-12">
               <div className="text-center space-y-2">
-                <span className="text-xs font-mono text-emerald-400 uppercase tracking-widest font-bold">TRANSPARENT VALUE ENGINE</span>
-                <h2 className="text-3xl md:text-5xl font-bold text-white">Dynamic Pricing & ROI Estimator</h2>
+                <span className="text-xs font-mono text-emerald-400 uppercase tracking-widest font-bold">{TRANSLATIONS[lang].roi_badge}</span>
+                <h2 className="text-3xl md:text-5xl font-bold text-white">{TRANSLATIONS[lang].roi_title}</h2>
                 <p className="text-slate-400 max-w-xl mx-auto text-sm">
-                  Estimate premium platform architecture costs and model the actual hours and communication expenses saved for your team.
+                  {TRANSLATIONS[lang].roi_desc}
                 </p>
               </div>
 
@@ -848,7 +1157,7 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
                       <span>STEP 1: CHOOSE WEBSITE MODULE BASE TIER</span>
                       <span className="text-slate-500 lowercase">(pick one)</span>
                     </p>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
                       <button
                         type="button"
                         onClick={() => setCalcTier("landing")}
@@ -890,6 +1199,21 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
                         <span className="block text-xs font-semibold text-cyan-400 font-mono mb-1">₦750,000</span>
                         <p className="font-bold text-sm">Dynamic Custom Portal</p>
                         <p className="text-[11px] text-slate-500 mt-1">Schools & Churches, reports generation & member directories.</p>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setCalcTier("enterprise")}
+                        className={`p-4 rounded-xl border text-left relative transition-all ${
+                          calcTier === "enterprise"
+                            ? "bg-slate-950 border-emerald-500 text-white"
+                            : "bg-slate-950/40 border-slate-800 text-slate-450 hover:bg-slate-950 hover:border-slate-750"
+                        }`}
+                      >
+                        <div className="absolute top-0 right-0 px-2 py-0.5 bg-orange-500/20 text-[9px] rounded-bl font-mono text-orange-400 uppercase font-bold">10% OFF</div>
+                        <span className="block text-xs font-semibold text-orange-400 font-mono mb-1">₦1,400,000</span>
+                        <p className="font-bold text-sm font-sans">Enterprise Suite</p>
+                        <p className="text-[11px] text-slate-500 mt-1">Full-scale integrations with built-in volume discounts.</p>
                       </button>
                     </div>
                   </div>
@@ -994,8 +1318,18 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
                       <span className="text-[10px] font-mono uppercase text-emerald-400 tracking-wider">PROJECT INVESTMENT SCOPE</span>
                       <h4 className="text-sm font-bold text-slate-400 mt-1 uppercase">ESTIMATED LAUNCH BUDGET</h4>
                       <p className="text-4xl md:text-5xl font-extrabold text-white font-display mt-2">
-                        ₦{roiResult.totalInvestment.toLocaleString()}
+                        <AnimatedNumber value={roiResult.totalInvestment} prefix="₦" />
                       </p>
+                      {roiResult.discountApplied > 0 && (
+                        <div className="flex flex-col gap-0.5 mt-2">
+                          <span className="text-xs text-orange-400 font-mono font-semibold">
+                            🏷️ 10% Volume Discount Level Applied: Saved ₦{roiResult.discountApplied.toLocaleString()}
+                          </span>
+                          <span className="text-xs text-slate-500 font-mono line-through">
+                            Original: ₦{roiResult.originalInvestment.toLocaleString()}
+                          </span>
+                        </div>
+                      )}
                       <p className="text-xs text-theme-emerald text-emerald-400 font-mono mt-2">
                         ≈ ${Math.round(roiResult.totalInvestment / 1400).toLocaleString()} USD Token equivalent valuation
                       </p>
@@ -1013,7 +1347,7 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
                         <div>
                           <p className="text-[10px] text-slate-500 uppercase font-mono tracking-wider">Estimated Administrative Hours Saved</p>
                           <p className="text-base font-bold text-white mt-0.5">
-                            {roiResult.totalHoursSavedMonthly} hrs / Month
+                            <AnimatedNumber value={roiResult.totalHoursSavedMonthly} suffix=" hrs" decimals={1} /> / Month
                           </p>
                         </div>
                       </div>
@@ -1026,7 +1360,7 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
                         <div>
                           <p className="text-[10px] text-slate-500 uppercase font-mono tracking-wider">Equivalent Reclaimed Labor Value</p>
                           <p className="text-base font-bold text-slate-200 mt-0.5">
-                            ₦{roiResult.financialSavingsMonthly.toLocaleString()} / Month
+                            <AnimatedNumber value={roiResult.financialSavingsMonthly} prefix="₦" /> / Month
                           </p>
                         </div>
                       </div>
@@ -1078,10 +1412,10 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
             {/* LIVE CHATBOT STRATEGY ADVISOR SECTION */}
             <section id="ai-consulting-sect" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-12">
               <div className="text-center space-y-2">
-                <span className="text-xs font-mono text-emerald-400 uppercase tracking-widest font-bold">INTERACTIVE DEEP CONSULTATION</span>
-                <h2 className="text-3xl md:text-5xl font-bold text-white">Live AI Strategy Proposal Generator</h2>
+                <span className="text-xs font-mono text-emerald-400 uppercase tracking-widest font-bold">{TRANSLATIONS[lang].consultant_badge}</span>
+                <h2 className="text-3xl md:text-5xl font-bold text-white">{TRANSLATIONS[lang].consultant_title}</h2>
                 <p className="text-slate-400 max-w-xl mx-auto text-sm">
-                  Experience our agency's actual automation power. Input your exact operational pain point and our server-side specialist handles live analysis instantly.
+                  {TRANSLATIONS[lang].consultant_desc}
                 </p>
               </div>
 
@@ -1141,19 +1475,30 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
                           type="tel"
                           placeholder="e.g., 08031234567"
                           value={contactPhone}
-                          onChange={(e) => setContactPhone(e.target.value)}
-                          className="w-full p-2.5 rounded-lg bg-slate-950 border border-slate-850 focus:border-emerald-500 text-xs placeholder-slate-700 focus:outline-none"
+                          onChange={(e) => handleStrategyPhoneChange(e.target.value)}
+                          className={`w-full p-2.5 rounded-lg bg-slate-950 border text-xs placeholder-slate-700 focus:outline-none ${
+                            strategyPhoneError ? "border-red-500 focus:border-red-500" : "border-slate-850 focus:border-emerald-500"
+                          }`}
                         />
+                        {strategyPhoneError && (
+                          <p className="text-[10px] text-red-400 mt-1 font-mono">{strategyPhoneError}</p>
+                        )}
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[9px] font-mono text-slate-500 uppercase">Private Email (Optional)</label>
+                        <label className="text-[9px] font-mono text-slate-500 uppercase">Private Email Address (Required)</label>
                         <input
                           type="email"
+                          required
                           placeholder="manager@domain.ng"
                           value={contactEmail}
-                          onChange={(e) => setContactEmail(e.target.value)}
-                          className="w-full p-2.5 rounded-lg bg-slate-950 border border-slate-850 focus:border-emerald-500 text-xs placeholder-slate-700 focus:outline-none"
+                          onChange={(e) => handleStrategyEmailChange(e.target.value)}
+                          className={`w-full p-2.5 rounded-lg bg-slate-950 border text-xs placeholder-slate-700 focus:outline-none ${
+                            strategyEmailError ? "border-red-500 focus:border-red-500" : "border-slate-850 focus:border-emerald-500"
+                          }`}
                         />
+                        {strategyEmailError && (
+                          <p className="text-[10px] text-red-400 mt-1 font-mono">{strategyEmailError}</p>
+                        )}
                       </div>
                     </div>
 
@@ -1253,10 +1598,10 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
             {/* INTERACTIVE COMPREHENSIVE FAQ SECTION */}
             <section id="faq" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-10">
               <div className="text-center space-y-2">
-                <span className="text-xs font-mono text-emerald-400 uppercase tracking-widest font-bold">CLIENT KNOWLEDGE BASE</span>
-                <h2 className="text-3xl md:text-5xl font-bold text-white">Frequently Addressed Questions</h2>
+                <span className="text-xs font-mono text-emerald-400 uppercase tracking-widest font-bold">{TRANSLATIONS[lang].faq_badge}</span>
+                <h2 className="text-3xl md:text-5xl font-bold text-white">{TRANSLATIONS[lang].faq_title}</h2>
                 <p className="text-slate-400 max-w-xl mx-auto text-sm">
-                  We demystify modern technology. Read our straightforward answers regarding delivery speeds, billing integrations, and tech standards.
+                  {TRANSLATIONS[lang].faq_desc}
                 </p>
               </div>
 
@@ -1275,14 +1620,14 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
                   </div>
 
                   <div className="flex bg-slate-900 rounded-xl p-1 border border-slate-800 w-full md:w-auto overflow-x-auto">
-                    {["All", "Web Dev", "AI Automation", "Trust & Delivery"].map(category => (
+                    {["All", "Web Dev", "AI Automation", "Pricing", "Trust & Delivery"].map(category => (
                       <button
                         key={category}
                         onClick={() => setFaqCategory(category)}
                         className={`px-4 py-1.5 text-xs font-semibold rounded-lg shrink-0 transition ${
                           faqCategory === category
-                            ? "bg-slate-950 text-emerald-400 border border-slate-800"
-                            : "text-slate-400 hover:text-slate-200 animate"
+                            ? "bg-slate-950 text-orange-400 border border-slate-800"
+                            : "text-slate-400 hover:text-slate-200"
                         }`}
                       >
                         {category}
@@ -1304,34 +1649,95 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
                       return (
                         <div className="text-center py-12 text-slate-500">
                           <p>No queries match your search parameters.</p>
-                          <button onClick={() => { setFaqSearch(""); setFaqCategory("All"); }} className="text-emerald-400 underline text-xs mt-2">Reset FAQ Filters</button>
+                          <button onClick={() => { setFaqSearch(""); setFaqCategory("All"); }} className="text-orange-400 underline text-xs mt-2">Reset FAQ Filters</button>
                         </div>
                       );
                     }
 
-                    return filtered.map((faq, i) => (
-                      <div
-                        key={i}
-                        className="bg-slate-900/40 border border-slate-880 rounded-xl transition-all duration-200"
-                      >
-                        <button
-                          onClick={() => setExpandedFaqIndex(expandedFaqIndex === i ? null : i)}
-                          className="w-full p-4 text-left flex items-center justify-between gap-4 font-medium text-white hover:text-emerald-400 transition"
-                        >
-                          <span className="text-sm md:text-base">{faq.question}</span>
-                          <span className="text-slate-500">{expandedFaqIndex === i ? "▲" : "▼"}</span>
-                        </button>
-                        
-                        {expandedFaqIndex === i && (
-                          <div className="px-4 pb-4 text-xs md:text-sm text-slate-400 border-t border-slate-900/60 pt-3 leading-relaxed">
-                            {faq.answer}
-                            <div className="mt-3 flex gap-2">
-                              <span className="text-[10px] uppercase font-mono bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded border border-emerald-500/20">{faq.category}</span>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ));
+                    return (
+                      <AnimatePresence mode="popLayout">
+                        {filtered.map((faq) => {
+                          const isExpanded = expandedFaqId === faq.question;
+                          return (
+                            <motion.div
+                              key={faq.question}
+                              id={getFAQHash(faq.question)}
+                              layout
+                              initial={{ opacity: 0, y: 15 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: -15 }}
+                              transition={{ type: "spring", stiffness: 350, damping: 30 }}
+                              className={`rounded-xl overflow-hidden transition-all border ${
+                                theme === "dark" 
+                                  ? "bg-slate-900/40 border-slate-800 text-slate-100" 
+                                  : "bg-white border-slate-200 text-slate-800 shadow-sm"
+                              }`}
+                            >
+                              <div
+                                onClick={() => setExpandedFaqId(isExpanded ? null : faq.question)}
+                                className={`w-full p-4 text-left flex items-start sm:items-center justify-between gap-4 font-medium transition cursor-pointer select-none ${
+                                  theme === "dark"
+                                    ? "text-white hover:text-orange-400 hover:bg-slate-900/10"
+                                    : "text-slate-800 hover:text-orange-500 hover:bg-slate-100/40"
+                                }`}
+                              >
+                                <div className="flex flex-col sm:flex-row sm:items-center gap-2 md:gap-3 flex-1 min-w-0">
+                                  <span className="text-sm md:text-base leading-snug">{highlightText(faq.question, faqSearch)}</span>
+                                  <span className="inline-block self-start sm:self-auto text-[9px] uppercase font-mono px-2 py-0.5 rounded border border-orange-500/20 bg-orange-500/10 text-orange-400 font-semibold shrink-0">
+                                    {faq.category}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0 self-center" onClick={(e) => e.stopPropagation()}>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleShareFAQ(faq.question)}
+                                    title="Copy direct link to this FAQ"
+                                    className="p-1.5 text-slate-400 hover:text-orange-400 hover:bg-slate-850 rounded transition focus:outline-none"
+                                  >
+                                    <Share2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setExpandedFaqId(isExpanded ? null : faq.question)}
+                                    className="p-1.5 text-slate-400 hover:text-orange-400 transition focus:outline-none"
+                                  >
+                                    <span className="text-xs font-mono">{isExpanded ? "▲" : "▼"}</span>
+                                  </button>
+                                </div>
+                              </div>
+                              
+                              <AnimatePresence initial={false}>
+                                {isExpanded && (
+                                  <motion.div
+                                    initial={{ height: 0, opacity: 0 }}
+                                    animate={{ height: "auto", opacity: 1 }}
+                                    exit={{ height: 0, opacity: 0 }}
+                                    transition={{ 
+                                      type: "spring", 
+                                      stiffness: 220, 
+                                      damping: 17,
+                                      mass: 0.8
+                                    }}
+                                    style={{ overflow: "hidden" }}
+                                  >
+                                    <div className={`px-4 pb-4 text-xs md:text-sm pt-3 leading-relaxed border-t transition-colors ${
+                                      theme === "dark"
+                                        ? "text-slate-400 border-slate-900/60"
+                                        : "text-slate-600 border-slate-150"
+                                    }`}>
+                                      {faq.answer}
+                                      <div className="mt-3 flex gap-2">
+                                        <span className="text-[10px] uppercase font-mono bg-orange-500/10 text-orange-400 px-2 py-0.5 rounded border border-orange-500/20">{faq.category}</span>
+                                      </div>
+                                    </div>
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </motion.div>
+                          );
+                        })}
+                      </AnimatePresence>
+                    );
                   })()}
                 </div>
               </div>
@@ -1451,10 +1857,7 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
                   </div>
                 ) : (
                   <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      setBookingSubmitted(true);
-                    }}
+                    onSubmit={handleBookingSubmit}
                     className="max-w-xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-4 text-left"
                   >
                     <div className="space-y-1">
@@ -1488,12 +1891,34 @@ For your **${industry}** industry operations, the pain point **"${painPoint}"** 
                         required
                         placeholder="e.g., 0803 456 7890"
                         value={bookingPhone}
-                        onChange={(e) => setBookingPhone(e.target.value)}
-                        className="w-full p-3 rounded-lg bg-slate-900 border border-slate-800 text-slate-200 text-sm focus:outline-none focus:border-emerald-500 placeholder-slate-600"
+                        onChange={(e) => handleBookingPhoneChange(e.target.value)}
+                        className={`w-full p-3 rounded-lg bg-slate-900 border text-slate-200 text-sm focus:outline-none placeholder-slate-600 ${
+                          bookingPhoneError ? "border-red-500 focus:border-red-500" : "border-slate-800 focus:border-emerald-500"
+                        }`}
                       />
+                      {bookingPhoneError && (
+                        <p className="text-[10px] text-red-400 mt-1 font-mono">{bookingPhoneError}</p>
+                      )}
                     </div>
 
                     <div className="space-y-1">
+                      <label className="text-[10px] font-mono text-slate-400 uppercase">Private Email Address (Required)</label>
+                      <input
+                        type="email"
+                        required
+                        placeholder="e.g., manager@school.ng"
+                        value={bookingEmail}
+                        onChange={(e) => handleBookingEmailChange(e.target.value)}
+                        className={`w-full p-3 rounded-lg bg-slate-900 border text-slate-200 text-sm focus:outline-none placeholder-slate-600 ${
+                          bookingEmailError ? "border-red-500 focus:border-red-500" : "border-slate-800 focus:border-emerald-500"
+                        }`}
+                      />
+                      {bookingEmailError && (
+                        <p className="text-[10px] text-red-400 mt-1 font-mono">{bookingEmailError}</p>
+                      )}
+                    </div>
+
+                    <div className="md:col-span-2 space-y-1">
                       <label className="text-[10px] font-mono text-slate-400 uppercase">Selected Technology Area</label>
                       <select
                         value={bookingService}
