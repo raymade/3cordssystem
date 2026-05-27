@@ -166,31 +166,31 @@ export const GENERAL_FAQS: FAQItem[] = [
   {
     question: "How long does it take 3Cords to build a premium business portal?",
     answer: "A standard elite custom landing page or modular business site is engineered, optimized, and ready for deployment within 7 to 14 working days. More complex custom AI WhatsApp CRM database integrations typically require up to 21 working days for continuous feedback loops and testing.",
-    category: "Web Dev"
+    category: "Technical"
   },
   {
     question: "Do our clients need to pay expensive monthly software fees for AI?",
     answer: "Absolutely not. We prioritize cost-effective layouts. We configure solutions leveraging lightweight serverless API models like Gemini 3.5 Flash, which has an incredibly generous free tier (saving you thousands of dollars compared to costly alternatives). We only recommend paid subscription API models when your volume absolutely demands it.",
-    category: "Pricing"
+    category: "Billing"
   },
   {
     question: "What exactly is the 'One-Man AI Agency' blueprint?",
     answer: "It is a comprehensive entrepreneurial system. Many graduates and freelancers in Nigeria want to launch high-paying tech careers. We set you up with copy-paste marketing blueprints, white-labeled client pitches, automatic lead-generation tools, and direct guidance on how to sell AI automations to SMEs for ₦150,000+ per month.",
-    category: "AI Automation"
+    category: "General"
   },
   {
     question: "Will the redesigned website work perfectly on low-end mobile phones?",
     answer: "Yes, this is a core performance mandate of our redesign. By relying on optimized modern framework rendering (Next.js/React static builds) instead of bloated page builders, page sizes are reduced by up to 80%, ensuring perfect responsive layout and near-instant loads even in poor signal spots in Nigeria.",
-    category: "Web Dev"
+    category: "Technical"
   },
   {
     question: "Do you offer flexible installment pricing for small businesses in Lagos?",
     answer: "Yes, we structure payments to align with your business milestones. Our standard structure is 50% upfront to initiate layout architecture and coding, and 50% upon final deployment and staff training. Custom monthly retainer plans are also available.",
-    category: "Pricing"
+    category: "Billing"
   },
   {
     question: "How do we get started with 3Cords System?",
     answer: "Simply use our interactive AI Proposal Generator below to get an instant blueprint, or click the direct 'WhatsApp Strategy Hotline' floating widget to chat directly with our tech lead in Lagos. We will map out your system architecture for free.",
-    category: "Trust & Delivery"
+    category: "General"
   }
 ];

@@ -1,6 +1,6 @@
 {
   "name": "3Cords System Redesign & Strategic Proposal",
   "description": "Premium world-class redesign, interactive client portal, dynamic pricing calculator, and consultant audit dashboard for 3Cords System Global Resources.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

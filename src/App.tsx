@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Logo } from "./components/Logo";
 import { AnimatedNumber } from "./components/AnimatedNumber";
@@ -6,6 +6,7 @@ import { LanguageSwitcher, LanguageCode } from "./components/LanguageSwitcher";
 import { TRANSLATIONS } from "./utils/translations";
 import { TestimonialCarousel } from "./components/TestimonialCarousel";
 import { Sun, Moon } from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import {
   Monitor,
   Cpu,
@@ -41,7 +42,9 @@ import {
   FileText,
   MousePointerClick,
   Share2,
-  ListFilter
+  ListFilter,
+  Mic,
+  MicOff
 } from "lucide-react";
 import {
   SERVICES_DATA,
@@ -51,7 +54,7 @@ import {
   GENERAL_FAQS,
   BRAND_COLORS
 } from "./data";
-import { ServiceItem, CaseStudyItem, AuditItem } from "./types";
+import { ServiceItem, CaseStudyItem, AuditItem, FAQItem } from "./types";
 
 export default function App() {
   // Navigation & Tab state
@@ -66,6 +69,204 @@ export default function App() {
   const [contactPhone, setContactPhone] = useState("");
   const [aiProposal, setAiProposal] = useState<string>("");
   const [isAiLoading, setIsAiLoading] = useState(false);
+  
+  // Voice recognition states for input fields using Web Speech API
+  const [isListeningBusiness, setIsListeningBusiness] = useState(false);
+  const [isListeningPain, setIsListeningPain] = useState(false);
+  const [speechError, setSpeechError] = useState<string | null>(null);
+  const recognitionRef = useRef<any>(null);
+
+  // Real-time audio feedback state with 12 dynamic visualizer bands
+  const [audioLevels, setAudioLevels] = useState<number[]>([12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12]);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const active = isListeningBusiness || isListeningPain;
+    if (!active) {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      if (audioStreamRef.current) {
+        audioStreamRef.current.getTracks().forEach(track => track.stop());
+        audioStreamRef.current = null;
+      }
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(err => console.error("Error closing context:", err));
+        audioContextRef.current = null;
+      }
+      setAudioLevels([12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12]);
+      return;
+    }
+
+    let isSubscribed = true;
+    let analyser: AnalyserNode | null = null;
+    let dataArray: Uint8Array;
+
+    const initAudio = async () => {
+      try {
+        // Try requesting real mic access for visual feedback
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        if (!isSubscribed) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+        audioStreamRef.current = stream;
+
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        const ctx = new AudioContextClass();
+        audioContextRef.current = ctx;
+
+        const source = ctx.createMediaStreamSource(stream);
+        analyser = ctx.createAnalyser();
+        analyser.fftSize = 64; 
+        source.connect(analyser);
+
+        const bufferLength = analyser.frequencyBinCount;
+        dataArray = new Uint8Array(bufferLength);
+
+        const updateLevel = () => {
+          if (!isSubscribed) return;
+          if (analyser) {
+            analyser.getByteFrequencyData(dataArray);
+            const subset = Array.from(dataArray.slice(0, 12)).map((val, idx) => {
+              // Apply dynamic low-volume range expansion (non-linear scaling)
+              // to significantly lift quieter signals for much higher visibility.
+              const normalized = val / 255;
+              const boosted = Math.pow(normalized, 0.4); // Deeper root for aggressive quiet boost
+              const baseValue = Math.max(15, Math.round(boosted * 100));
+              const randomOffset = isListeningBusiness || isListeningPain ? Math.sin(Date.now() / 150 + idx) * 4 + Math.random() * 6 : 0;
+              return Math.min(100, Math.max(15, baseValue + randomOffset));
+            });
+            while (subset.length < 12) subset.push(15);
+            setAudioLevels(subset);
+          }
+          animationFrameRef.current = requestAnimationFrame(updateLevel);
+        };
+
+        animationFrameRef.current = requestAnimationFrame(updateLevel);
+      } catch (err) {
+        // If modern permissions are rejected or iframe locks the audio stream,
+        // we fallback to a beautiful, organic mathematical wave simulation.
+        const simulatedLoop = () => {
+          if (!isSubscribed) return;
+          const subset = Array.from({ length: 12 }).map((_, idx) => {
+            const phase = Date.now() / 80 + idx * 0.7;
+            const sineInput = Math.sin(phase) * 35;
+            const cosInput = Math.cos(phase * 1.8) * 15;
+            const val = Math.round(62 + sineInput + cosInput + Math.random() * 12);
+            return Math.min(100, Math.max(20, val));
+          });
+          setAudioLevels(subset);
+          animationFrameRef.current = requestAnimationFrame(simulatedLoop);
+        };
+        animationFrameRef.current = requestAnimationFrame(simulatedLoop);
+      }
+    };
+
+    initAudio();
+
+    return () => {
+      isSubscribed = false;
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      if (audioStreamRef.current) {
+        audioStreamRef.current.getTracks().forEach(track => track.stop());
+      }
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => {});
+      }
+    };
+  }, [isListeningBusiness, isListeningPain]);
+
+  const toggleSpeechRecognition = (field: "business" | "painPoint") => {
+    setSpeechError(null);
+    const isCurrentlyListening = field === "business" ? isListeningBusiness : isListeningPain;
+
+    if (isCurrentlyListening) {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (err) {
+          console.error("Error stopping speech recognition:", err);
+        }
+      }
+      setIsListeningBusiness(false);
+      setIsListeningPain(false);
+      return;
+    }
+
+    const SpeechRecognitionClass = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognitionClass) {
+      setSpeechError("Speech recognition is not supported in this environment or browser. Try Chrome/Safari.");
+      return;
+    }
+
+    try {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort();
+        } catch (err) {}
+      }
+
+      const recognition = new SpeechRecognitionClass();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+
+      // Native Nigerian locales map corresponding to standard Web Speech locales
+      const localeMap: Record<string, string> = {
+        en: "en-NG",
+        yo: "yo-NG",
+        ha: "ha-NG",
+        ig: "ig-NG"
+      };
+      recognition.lang = localeMap[lang] || "en-NG";
+
+      if (field === "business") {
+        setIsListeningBusiness(true);
+        setIsListeningPain(false);
+      } else {
+        setIsListeningPain(true);
+        setIsListeningBusiness(false);
+      }
+
+      recognition.onresult = (event: any) => {
+        const transcript = event.results[0][0]?.transcript;
+        if (transcript) {
+          if (field === "business") {
+            setBusinessName(transcript);
+          } else {
+            setPainPoint(transcript);
+          }
+        }
+      };
+
+      recognition.onerror = (event: any) => {
+        console.error("Speech recognition error:", event);
+        if (event.error && event.error !== "no-speech") {
+          setSpeechError(`Notice: ${event.error === "not-allowed" ? "Microphone access blocked" : event.error}`);
+        }
+        setIsListeningBusiness(false);
+        setIsListeningPain(false);
+      };
+
+      recognition.onend = () => {
+        setIsListeningBusiness(false);
+        setIsListeningPain(false);
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (e: any) {
+      console.error("Speech Recognition initialization error:", e);
+      setSpeechError("Could not access microphone.");
+      setIsListeningBusiness(false);
+      setIsListeningPain(false);
+    }
+  };
   
   // Interactive Service overlay state
   const [selectedService, setSelectedService] = useState<ServiceItem | null>(null);
@@ -84,6 +285,11 @@ export default function App() {
   const [faqCategory, setFaqCategory] = useState<string>("All");
   const [expandedFaqId, setExpandedFaqId] = useState<string | null>(null);
 
+  // Dynamic FAQ translated state
+  const [localizedFaqs, setLocalizedFaqs] = useState<FAQItem[]>(GENERAL_FAQS);
+  const [isLoadingFaqs, setIsLoadingFaqs] = useState(false);
+  const [copiedFaqs, setCopiedFaqs] = useState(false);
+
   // Leads submission state
   const [bookingName, setBookingName] = useState("");
   const [bookingCompany, setBookingCompany] = useState("");
@@ -96,6 +302,144 @@ export default function App() {
   const [lang, setLang] = useState<LanguageCode>("en");
   const [theme, setTheme] = useState<"dark" | "light">("dark");
 
+  // Dynamic Translation fetch effect on language change
+  useEffect(() => {
+    let isCurrent = true;
+    if (lang === "en") {
+      setLocalizedFaqs(GENERAL_FAQS);
+      return;
+    }
+
+    const fetchTranslation = async () => {
+      setIsLoadingFaqs(true);
+      try {
+        const res = await fetch("/api/translate-faqs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ targetLang: lang, faqs: GENERAL_FAQS })
+        });
+        const data = await res.json();
+        if (isCurrent && data.success && data.translatedFaqs) {
+          setLocalizedFaqs(data.translatedFaqs);
+        }
+      } catch (err) {
+        console.error("Dynamic AI translation failed:", err);
+      } finally {
+        if (isCurrent) setIsLoadingFaqs(false);
+      }
+    };
+
+    fetchTranslation();
+    return () => {
+      isCurrent = false;
+    };
+  }, [lang]);
+
+  // Copy all FAQs to clipboard formatted as Markdown
+  const handleCopyFAQs = () => {
+    const titles: Record<LanguageCode, string> = {
+      en: "Frequently Asked Questions",
+      yo: "Àwọn Ìbéèrè Tí A Sábà Ń Béèrè",
+      ha: "Tambayoyin Da Aka Fi Yi",
+      ig: "Ajụjụ Ndị Ajụrụ Teziri"
+    };
+
+    let md = `# 3Cords System - ${titles[lang]} (${lang.toUpperCase()})\n\n`;
+    md += `Exported relative to client-facing documentation on ${new Date().toLocaleDateString()}.\n\n`;
+
+    const distinctCategories: ("Technical" | "Billing" | "General")[] = ["Technical", "Billing", "General"];
+    distinctCategories.forEach(cat => {
+      const items = localizedFaqs.filter(item => item.category === cat);
+      if (items.length > 0) {
+        md += `## ${cat}\n\n`;
+        items.forEach((item, index) => {
+          md += `### Q${index + 1}: ${item.question}\n`;
+          md += `**A:** ${item.answer}\n\n`;
+        });
+      }
+    });
+
+    navigator.clipboard.writeText(md)
+      .then(() => {
+        setCopiedFaqs(true);
+        setTimeout(() => setCopiedFaqs(false), 2000);
+      })
+      .catch(err => {
+        console.error("Failed to copy FAQs:", err);
+      });
+  };
+
+  // Trending FAQ searches state
+  const [trendingSearches, setTrendingSearches] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem("faq_trending_searches");
+      return saved ? JSON.parse(saved) : ["WhatsApp", "Cost", "Timeline", "Security", "SEO"];
+    } catch (e) {
+      return ["WhatsApp", "Cost", "Timeline", "Security", "SEO"];
+    }
+  });
+
+  // Mobile Sticky CTA visual visibility state
+  const [showMobileStickyCta, setShowMobileStickyCta] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      if (window.innerWidth < 768) {
+        if (window.scrollY > 550) {
+          setShowMobileStickyCta(true);
+        } else {
+          setShowMobileStickyCta(false);
+        }
+      } else {
+        setShowMobileStickyCta(false);
+      }
+    };
+
+    window.addEventListener("scroll", handleScroll);
+    handleScroll();
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  // Lead Analytics Click Log state
+  const [whatsAppClickLogs, setWhatsAppClickLogs] = useState<{
+    id: string;
+    timestamp: string;
+    serviceViewed: string;
+    action: string;
+    platform: string;
+  }[]>(() => {
+    try {
+      const saved = localStorage.getItem("3cords_wa_clicks");
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.error(e);
+    }
+    return [
+      {
+        id: "demo-1",
+        timestamp: "2026-05-26 04:12:08",
+        serviceViewed: "World-Class Web Architectures",
+        action: "Floating WhatsApp Consultation button clicked",
+        platform: "Mobile App Interface"
+      },
+      {
+        id: "demo-2",
+        timestamp: "2026-05-25 18:44:21",
+        serviceViewed: "AI Automation & WhatsApp Bots",
+        action: "Floating WhatsApp Consultation button clicked",
+        platform: "Desktop Dashboard"
+      }
+    ];
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("3cords_wa_clicks", JSON.stringify(whatsAppClickLogs));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [whatsAppClickLogs]);
+
   // Real-time form field errors
   const [bookingEmailError, setBookingEmailError] = useState<string | null>(null);
   const [bookingPhoneError, setBookingPhoneError] = useState<string | null>(null);
@@ -104,14 +448,23 @@ export default function App() {
 
   // Clipboard feedback state & custom Toast system
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
-  const [toasts, setToasts] = useState<{ id: string; message: string; type: "success" | "info" }[]>([]);
+  const [toasts, setToasts] = useState<{ 
+    id: string; 
+    message: string; 
+    type: "success" | "info";
+    action?: { label: "Undo" | "View Logs"; callback: () => void }
+  }[]>([]);
 
-  const addToast = (message: string, type: "success" | "info" = "success") => {
+  const addToast = (
+    message: string, 
+    type: "success" | "info" = "success",
+    action?: { label: "Undo" | "View Logs"; callback: () => void }
+  ) => {
     const id = Math.random().toString(36).substring(2, 9);
-    setToasts(prev => [...prev, { id, message, type }]);
+    setToasts(prev => [...prev, { id, message, type, action }]);
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id));
-    }, 4000); // 4 seconds auto-dismiss
+    }, 6000); // 6 seconds for action interaction
   };
 
   // Helper to visually highlight search terms inside a text string
@@ -146,6 +499,41 @@ export default function App() {
       .replace(/[^\w\s-]/g, "")
       .trim()
       .replace(/\s+/g, "-");
+  };
+
+  // Record FAQ search terms to trending list after user finishes typing
+  useEffect(() => {
+    if (!faqSearch || faqSearch.trim().length < 3) return;
+
+    const timer = setTimeout(() => {
+      const term = faqSearch.trim();
+      setTrendingSearches(prev => {
+        const cleaned = prev.map(t => t.toLowerCase());
+        if (cleaned.includes(term.toLowerCase())) {
+          return prev;
+        }
+        const formatted = term.charAt(0).toUpperCase() + term.slice(1);
+        const updated = [formatted, ...prev.filter(t => t.toLowerCase() !== term.toLowerCase())].slice(0, 6);
+        try {
+          localStorage.setItem("faq_trending_searches", JSON.stringify(updated));
+        } catch (e) {
+          console.error(e);
+        }
+        return updated;
+      });
+    }, 1200);
+
+    return () => clearTimeout(timer);
+  }, [faqSearch]);
+
+  const handleTrendingClick = (term: string) => {
+    setFaqSearch(term);
+    addToast(`loaded FAQ search filter: "${term}"`, "success", {
+      label: "Undo",
+      callback: () => {
+        setFaqSearch("");
+      }
+    });
   };
 
   // Handler to copy direct link and update URL hash
@@ -238,6 +626,55 @@ export default function App() {
     return `https://wa.me/2348123456789?text=${encoded}`;
   };
 
+  const getCurrentlyViewedService = () => {
+    if (selectedService) {
+      return selectedService.title;
+    }
+    if (bookingService) {
+      if (bookingService === "web_and_ai_combo") return "Elite Web + WhatsApp Automation Combo";
+      if (bookingService === "school_church_portal") return "School Report Cards Portal";
+      if (bookingService === "independent_white_label") return "One-Man AI Agency Setup Blueprint";
+      if (bookingService === "ongoing_maintenance") return "Managed Website Maintenance";
+    }
+    return "Main Corporate Redesign Showcase";
+  };
+
+  const logWhatsAppClick = () => {
+    const serviceName = getCurrentlyViewedService();
+    const newLog = {
+      id: Math.random().toString(36).substring(2, 9),
+      timestamp: new Date().toISOString().replace("T", " ").substring(0, 19),
+      serviceViewed: serviceName,
+      action: "Floating WhatsApp Consultation button clicked",
+      platform: window.innerWidth < 768 ? "Mobile App Interface" : "Desktop Dashboard"
+    };
+
+    setWhatsAppClickLogs(prev => [newLog, ...prev]);
+    addToast(`Floating WhatsApp click registered under context: "${serviceName}"!`, "success", {
+      label: "View Logs",
+      callback: () => {
+        document.getElementById("telemetry-console-section")?.scrollIntoView({ behavior: "smooth" });
+      }
+    });
+  };
+
+  const getMostPopularService = () => {
+    if (whatsAppClickLogs.length === 0) return "No clicks yet";
+    const counts: Record<string, number> = {};
+    whatsAppClickLogs.forEach(log => {
+      counts[log.serviceViewed] = (counts[log.serviceViewed] || 0) + 1;
+    });
+    let maxCount = 0;
+    let mainService = "Main Corporate Redesign Showcase";
+    Object.entries(counts).forEach(([service, count]) => {
+      if (count > maxCount) {
+        maxCount = count;
+        mainService = service;
+      }
+    });
+    return mainService;
+  };
+
   // Interactive AI Strategist generator trigger
   const generateProposal = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -320,7 +757,12 @@ For your **${industry}** operations, the pain point **"${painPoint}"** represent
     }
 
     setBookingSubmitted(true);
-    addToast("Strategy audit request submitted successfully!", "success");
+    addToast("Strategy audit request submitted successfully!", "success", {
+      label: "View Logs",
+      callback: () => {
+        document.getElementById("telemetry-console-section")?.scrollIntoView({ behavior: "smooth" });
+      }
+    });
   };
 
   // ROI computations
@@ -1137,6 +1579,220 @@ For your **${industry}** operations, the pain point **"${painPoint}"** represent
 
             <div className="laser-line max-w-7xl mx-auto" />
 
+            {/* INTERACTIVE 3-PHASE DELIVERY TIMELINE */}
+            <section className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-10">
+              <div className="text-center space-y-3">
+                <span className={`text-xs font-mono uppercase tracking-widest font-bold ${theme === "dark" ? "text-orange-400" : "text-orange-600"}`}>
+                  3CORDS EXECUTION METHODOLOGY
+                </span>
+                <h2 className={`text-3xl md:text-5xl font-black tracking-tight ${theme === "dark" ? "text-white" : "text-slate-900"}`}>
+                  High-Speed Delivery Timeline
+                </h2>
+                <p className="text-slate-400 max-w-xl mx-auto text-sm leading-relaxed">
+                  Hover or select each phase of our signature 15-day double-stack execution track to inspect exact tech processes.
+                </p>
+              </div>
+
+              {/* Vertical timeline body */}
+              <div className="relative max-w-4xl mx-auto pl-6 md:pl-0">
+                {/* Central line */}
+                <div className={`absolute top-0 bottom-0 left-4 md:left-1/2 w-0.5 -ml-px ${theme === "dark" ? "bg-gradient-to-b from-orange-500/80 via-teal-500/80 to-emerald-500/85" : "bg-gradient-to-b from-orange-400 via-teal-400 to-emerald-500"}`} />
+
+                {/* Timeline items list */}
+                <div className="space-y-12 relative">
+                  
+                  {/* Phase 1 */}
+                  <div className="flex flex-col md:flex-row md:items-center relative">
+                    <div className="absolute left-[-26px] md:left-1/2 md:-translate-x-1/2 z-10 flex items-center justify-center">
+                      <div className={`h-10 w-10 rounded-full border-2 flex items-center justify-center font-bold text-xs bg-slate-950 transition-colors ${
+                        theme === "dark" 
+                          ? "border-orange-500 text-orange-400 shadow-[0_0_15px_rgba(249,115,22,0.2)]"
+                          : "border-orange-500 text-orange-500 bg-white"
+                      }`}>
+                        01
+                      </div>
+                    </div>
+
+                    {/* Timeline Left Column */}
+                    <div className="w-full md:w-1/2 md:pr-12 md:text-right">
+                      <span className="text-xs font-mono font-bold text-orange-400 uppercase tracking-widest bg-orange-500/10 px-2.5 py-1 rounded">
+                        Days 1–3: Audit & Wireframing
+                      </span>
+                    </div>
+
+                    {/* Timeline Right Column (Interactive Card) */}
+                    <div className="w-full md:w-1/2 md:pl-12 pt-4 md:pt-0">
+                      <motion.div
+                        whileHover={{ scale: 1.02 }}
+                        className={`p-6 rounded-2xl border transition-all cursor-pointer relative group ${
+                          theme === "dark"
+                            ? "bg-slate-900/40 border-slate-800 hover:border-orange-500/50 hover:bg-slate-900/60"
+                            : "bg-white border-slate-200 hover:border-orange-500/50 shadow-sm"
+                        }`}
+                      >
+                        <h4 className={`text-lg font-bold mb-1 group-hover:text-orange-500 transition-colors ${theme === "dark" ? "text-white" : "text-slate-850"}`}>
+                          Phase 1: Deep Tech Audit
+                        </h4>
+                        <p className="text-xs text-slate-400 leading-relaxed mb-4">
+                          We execute local speed diagnostics inside extreme Lagos workspaces, auditing existing mobile load latency and listing core database integration leaks.
+                        </p>
+                        
+                        {/* Hover elements / micro bullets */}
+                        <div className="space-y-2 border-t border-slate-800/20 pt-3">
+                          <p className="text-[11px] font-mono text-slate-500 uppercase tracking-wider">Deliverables Preview:</p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                            {[
+                              "🔍 Core Bottleneck Analysis",
+                              "✏️ Wireframe Canvas Draft",
+                              "📋 Tech Audit Scorecard"
+                            ].map((item, idx) => (
+                              <div
+                                key={idx}
+                                className={`text-[11px] px-2 py-1 rounded border font-mono transition-all ${
+                                  theme === "dark"
+                                    ? "bg-slate-950/60 border-slate-800 text-slate-400 group-hover:bg-slate-950 group-hover:text-orange-300"
+                                    : "bg-slate-50 border-slate-100 text-slate-600 group-hover:bg-orange-50/50 group-hover:text-orange-600"
+                                }`}
+                              >
+                                {item}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </motion.div>
+                    </div>
+                  </div>
+
+                  {/* Phase 2 */}
+                  <div className="flex flex-col md:flex-row-reverse md:items-center relative">
+                    <div className="absolute left-[-26px] md:left-1/2 md:-translate-x-1/2 z-10 flex items-center justify-center">
+                      <div className={`h-10 w-10 rounded-full border-2 flex items-center justify-center font-bold text-xs bg-slate-950 transition-colors ${
+                        theme === "dark" 
+                          ? "border-teal-500 text-teal-400 shadow-[0_0_15px_rgba(20,184,166,0.2)]"
+                          : "border-teal-500 text-teal-650 bg-white"
+                      }`}>
+                        02
+                      </div>
+                    </div>
+
+                    {/* Timeline Left Column */}
+                    <div className="w-full md:w-1/2 md:pl-12 md:text-left">
+                      <span className="text-xs font-mono font-bold text-teal-400 uppercase tracking-widest bg-teal-500/10 px-2.5 py-1 rounded">
+                        Days 4–10: High-Speed Modular Build
+                      </span>
+                    </div>
+
+                    {/* Timeline Right Column (Interactive Card) */}
+                    <div className="w-full md:w-1/2 md:pr-12 pt-4 md:pt-0">
+                      <motion.div
+                        whileHover={{ scale: 1.02 }}
+                        className={`p-6 rounded-2xl border transition-all cursor-pointer relative group ${
+                          theme === "dark"
+                            ? "bg-slate-900/40 border-slate-800 hover:border-teal-500/50 hover:bg-slate-900/60"
+                            : "bg-white border-slate-200 hover:border-teal-500/50 shadow-sm"
+                        }`}
+                      >
+                        <h4 className={`text-lg font-bold mb-1 group-hover:text-teal-400 transition-colors ${theme === "dark" ? "text-white" : "text-slate-850"}`}>
+                          Phase 2: Full-Stack Modular Build
+                        </h4>
+                        <p className="text-xs text-slate-400 leading-relaxed mb-4">
+                          We construct pure, lightweight React structures with robust responsive performance. No bloated page templates; clean modular code is crafted locally.
+                        </p>
+
+                        {/* Hover elements / micro bullets */}
+                        <div className="space-y-2 border-t border-slate-800/20 pt-3">
+                          <p className="text-[11px] font-mono text-slate-500 uppercase tracking-wider">Deliverables Preview:</p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                            {[
+                              "⚡ Ultra-speed React Modules",
+                              "🧱 High-Contrast bento grid",
+                              "📦 Local state calculators"
+                            ].map((item, idx) => (
+                              <div
+                                key={idx}
+                                className={`text-[11px] px-2 py-1 rounded border font-mono transition-all ${
+                                  theme === "dark"
+                                    ? "bg-slate-950/60 border-slate-800 text-slate-400 group-hover:bg-slate-950 group-hover:text-teal-300"
+                                    : "bg-slate-50 border-slate-100 text-slate-600 group-hover:bg-teal-50/50 group-hover:text-teal-600"
+                                }`}
+                              >
+                                {item}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </motion.div>
+                    </div>
+                  </div>
+
+                  {/* Phase 3 */}
+                  <div className="flex flex-col md:flex-row md:items-center relative">
+                    <div className="absolute left-[-26px] md:left-1/2 md:-translate-x-1/2 z-10 flex items-center justify-center">
+                      <div className={`h-10 w-10 rounded-full border-2 flex items-center justify-center font-bold text-xs bg-slate-950 transition-colors ${
+                        theme === "dark" 
+                          ? "border-emerald-500 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.2)]"
+                          : "border-emerald-500 text-emerald-600 bg-white"
+                      }`}>
+                        03
+                      </div>
+                    </div>
+
+                    {/* Timeline Left Column */}
+                    <div className="w-full md:w-1/2 md:pr-12 md:text-right">
+                      <span className="text-xs font-mono font-bold text-emerald-400 uppercase tracking-widest bg-emerald-500/10 px-2.5 py-1 rounded">
+                        Days 11–15: AI Bot & Live Deployment
+                      </span>
+                    </div>
+
+                    {/* Timeline Right Column (Interactive Card) */}
+                    <div className="w-full md:w-1/2 md:pl-12 pt-4 md:pt-0">
+                      <motion.div
+                        whileHover={{ scale: 1.02 }}
+                        className={`p-6 rounded-2xl border transition-all cursor-pointer relative group ${
+                          theme === "dark"
+                            ? "bg-slate-900/40 border-slate-800 hover:border-emerald-500/50 hover:bg-slate-900/60"
+                            : "bg-white border-slate-200 hover:border-emerald-500/50 shadow-sm"
+                        }`}
+                      >
+                        <h4 className={`text-lg font-bold mb-1 group-hover:text-emerald-400 transition-colors ${theme === "dark" ? "text-white" : "text-slate-850"}`}>
+                          Phase 3: AI WhatsApp Integration & Go-Live
+                        </h4>
+                        <p className="text-xs text-slate-400 leading-relaxed mb-4">
+                          We mount custom Gemini conversational agents inside active school & SME WhatsApp handles, configure admin dashboards, and deploy onto lightweight servers.
+                        </p>
+
+                        {/* Hover elements / micro bullets */}
+                        <div className="space-y-2 border-t border-slate-800/20 pt-3">
+                          <p className="text-[11px] font-mono text-slate-500 uppercase tracking-wider">Deliverables Preview:</p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                            {[
+                              "🤖 Active Gemini WhatsApp bot",
+                              "📡 99.9% Cloud Run Ingress",
+                              "🛡️ Secure local sync panels"
+                            ].map((item, idx) => (
+                              <div
+                                key={idx}
+                                className={`text-[11px] px-2 py-1 rounded border font-mono transition-all ${
+                                  theme === "dark"
+                                    ? "bg-slate-950/60 border-slate-800 text-slate-400 group-hover:bg-slate-950 group-hover:text-emerald-300"
+                                    : "bg-slate-50 border-slate-100 text-slate-600 group-hover:bg-emerald-50/50 group-hover:text-emerald-600"
+                                }`}
+                              >
+                                {item}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </motion.div>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+            </section>
+
+            <div className="laser-line max-w-7xl mx-auto" />
+
             {/* DYNAMIC INTERACTIVE ROI CALCULATOR & CO-ESTIMATOR */}
             <section id="roi-calc-sect" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-12">
               <div className="text-center space-y-2">
@@ -1405,6 +2061,78 @@ For your **${industry}** operations, the pain point **"${painPoint}"** represent
                   </div>
                 </div>
               </div>
+
+              {/* ROI BAR CHART SAVINGS ANALYSIS */}
+              <div className={`p-6 rounded-2xl border transition-all space-y-4 ${
+                theme === "dark" 
+                  ? "bg-slate-900/40 border-slate-800 text-slate-100" 
+                  : "bg-white border-slate-200 text-slate-850 shadow-md"
+              }`}>
+                <div className="flex flex-col sm:flex-row sm:items-start md:items-center justify-between gap-4">
+                  <div>
+                    <span className="text-xs font-mono text-emerald-500 uppercase tracking-widest font-bold">SAVINGS FORECAST MODEL</span>
+                    <h3 className={`text-xl md:text-2xl font-black mt-1 ${theme === "dark" ? "text-white" : "text-slate-900"}`}>
+                      12-Month Cumulative Cost Comparison
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-1 max-w-2xl">
+                      Visualizes potential long-term savings by comparing ongoing manual operational overhead with upfront 3Cords automated architecture implementation (including a minor cumulative ₦20k recurring maintenance).
+                    </p>
+                  </div>
+                  <div className="px-3.5 py-1.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-full text-xs font-mono font-bold flex items-center gap-1.5 self-start sm:self-center">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    <span>Break-Even Trend Captured</span>
+                  </div>
+                </div>
+
+                <div className="h-[280px] w-full mt-4 font-mono text-[10px] sm:text-xs">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={(() => {
+                        const data = [];
+                        for (let month = 1; month <= 12; month++) {
+                          const manualCost = Math.round(roiResult.financialSavingsMonthly * month);
+                          const automatedCost = Math.round(roiResult.totalInvestment + (20000 * month));
+                          data.push({
+                            name: `Month ${month}`,
+                            "Manual Labor Costs": manualCost,
+                            "Automated System Costs": automatedCost
+                          });
+                        }
+                        return data;
+                      })()}
+                      margin={{ top: 15, right: 10, left: 10, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke={theme === "dark" ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)"} />
+                      <XAxis 
+                        dataKey="name" 
+                        stroke={theme === "dark" ? "#64748b" : "#475569"} 
+                        tickLine={false}
+                        fontSize={10}
+                      />
+                      <YAxis 
+                        stroke={theme === "dark" ? "#64748b" : "#475569"} 
+                        tickLine={false}
+                        tickFormatter={(value) => `₦${(value / 1000).toLocaleString()}k`}
+                        fontSize={10}
+                      />
+                      <Tooltip 
+                        contentStyle={{ 
+                          backgroundColor: theme === "dark" ? "#0f172a" : "#ffffff", 
+                          borderColor: theme === "dark" ? "#1e293b" : "#cbd5e1",
+                          borderRadius: "12px",
+                          color: theme === "dark" ? "#f8fafc" : "#0f172a",
+                          fontFamily: "monospace",
+                          fontSize: "11px"
+                        }} 
+                        formatter={(value: any) => [`₦${value.toLocaleString()}`, ""]}
+                      />
+                      <Legend verticalAlign="top" height={36} iconType="circle" />
+                      <Bar name="Manual Labor Costs" dataKey="Manual Labor Costs" fill="#f97316" radius={[4, 4, 0, 0]} />
+                      <Bar name="Automated System Costs" dataKey="Automated System Costs" fill="#10b981" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
             </section>
 
             <div className="laser-line max-w-7xl mx-auto" />
@@ -1425,24 +2153,106 @@ For your **${industry}** operations, the pain point **"${painPoint}"** represent
                   <form onSubmit={generateProposal} className="space-y-4">
                     <p className="text-[10px] text-emerald-400 font-mono tracking-widest uppercase">INPUT CORPORATE CHALLENGES</p>
                     
-                    <div className="space-y-1">
-                      <label className="text-[11px] font-mono text-slate-400 uppercase">1. Business Name / Identity</label>
-                      <input
-                        type="text"
-                        required
-                        placeholder="e.g., Christ the King Academy, Lagos"
-                        value={businessName}
-                        onChange={(e) => setBusinessName(e.target.value)}
-                        className="w-full p-3 rounded-lg bg-slate-950 border border-slate-8 w-11 hover:border-slate-700/80 focus:border-emerald-500 text-sm placeholder-slate-600 focus:outline-none"
-                      />
+                    {speechError && (
+                      <div className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/15 text-xs text-red-400 font-mono flex items-start gap-2 animate-fadeIn mb-4">
+                        <span className="shrink-0 mt-0.5">⚠️</span>
+                        <div>
+                          <p className="font-bold">Dictation Service Notice</p>
+                          <p className="opacity-90">{speechError}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[11px] font-mono text-slate-400 uppercase">1. Business Name / Identity</label>
+                        {isListeningBusiness && (
+                          <span className="text-[10px] text-emerald-400 font-mono animate-pulse flex items-center gap-1.5 bg-emerald-500/10 px-2 py-0.5 rounded-full animate-fadeIn">
+                            <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-ping" />
+                            Listening...
+                          </span>
+                        )}
+                      </div>
+                      <div className="relative">
+                        <AnimatePresence>
+                          {isListeningBusiness && (
+                            <motion.button
+                              type="button"
+                              initial={{ opacity: 0, scale: 0.8, x: -10 }}
+                              animate={{ 
+                                opacity: [1, 0.85, 1],
+                                scale: [1, 1.06, 1],
+                                x: 0 
+                              }}
+                              exit={{ opacity: 0, scale: 0.8, x: -10 }}
+                              transition={{
+                                x: { type: "spring", stiffness: 350, damping: 30 },
+                                opacity: { repeat: Infinity, duration: 1.8, ease: "easeInOut" },
+                                scale: { repeat: Infinity, duration: 1.8, ease: "easeInOut" }
+                              }}
+                              whileHover={{ scale: 1.1 }}
+                              onClick={() => toggleSpeechRecognition("business")}
+                              className="absolute left-2.5 top-[13px] flex items-center gap-1.5 bg-rose-500 text-[9px] text-white font-extrabold px-1.5 py-0.5 rounded tracking-widest font-mono z-20 shadow-lg shadow-rose-500/30 cursor-pointer hover:bg-rose-600 group transition-colors duration-200"
+                              title="Click to cancel recording"
+                            >
+                              <span className="w-1.5 h-1.5 bg-white rounded-full animate-ping group-hover:hidden" />
+                              <span className="group-hover:hidden">REC</span>
+                              <span className="hidden group-hover:inline-flex items-center gap-0.5">STOP ✕</span>
+                            </motion.button>
+                          )}
+                        </AnimatePresence>
+                        <AnimatePresence>
+                          {isListeningBusiness && (
+                            <motion.div 
+                              initial={{ opacity: 0, y: 5 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: 5 }}
+                              className="absolute left-16 right-10 bottom-1.5 h-5 flex items-end gap-[3px] pointer-events-none z-10 overflow-hidden"
+                            >
+                              {audioLevels.map((val, idx) => (
+                                <motion.div
+                                  key={idx}
+                                  animate={{ height: `${Math.max(15, val)}%` }}
+                                  transition={{ type: "spring", stiffness: 350, damping: 18 }}
+                                  className="flex-1 bg-gradient-to-t from-rose-600 via-pink-500 to-rose-400 rounded-t-[1px] shadow-[0_0_8px_rgba(239,68,68,0.4)]"
+                                />
+                              ))}
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                        <input
+                          type="text"
+                          required
+                          placeholder={isListeningBusiness ? "Dictate corporate name..." : "e.g., Christ the King Academy, Lagos"}
+                          value={businessName}
+                          onChange={(e) => setBusinessName(e.target.value)}
+                          className={`w-full ${
+                            isListeningBusiness 
+                              ? "pl-16 pb-[22px] pt-[10px] border-rose-500/50 ring-2 ring-rose-500/10 shadow-[0_0_15px_rgba(239,68,68,0.15)] bg-slate-950/90" 
+                              : "pl-3 py-3 border-slate-800 hover:border-slate-700/80 focus:border-emerald-500"
+                          } pr-10 rounded-lg bg-slate-950 text-sm placeholder-slate-600 focus:outline-none text-white transition-all duration-300`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => toggleSpeechRecognition("business")}
+                          className={`absolute right-2 top-1.5 p-2 rounded-md transition-all flex items-center justify-center cursor-pointer ${
+                            isListeningBusiness
+                              ? "bg-rose-500/20 text-rose-400 animate-pulse"
+                              : "text-slate-500 hover:text-slate-300 hover:bg-slate-900"
+                          }`}
+                          title="Dictate with voice input"
+                        >
+                          {isListeningBusiness ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
                     </div>
 
-                    <div className="space-y-1">
+                    <div className="space-y-1.5">
                       <label className="text-[11px] font-mono text-slate-400 uppercase">2. Industry / Sector Category</label>
                       <select
                         value={industry}
                         onChange={(e) => setIndustry(e.target.value)}
-                        className="w-full p-3 rounded-lg bg-slate-950 border border-slate-800 focus:border-emerald-500 text-sm text-slate-300 focus:outline-none"
+                        className="w-full p-3 rounded-lg bg-slate-950 border border-slate-800 focus:border-emerald-500 text-sm text-slate-300 focus:outline-none transition-all"
                       >
                         <option value="School / Educational Center">School / Educational Center</option>
                         <option value="Church / Religious Center">Church / Religious Center</option>
@@ -1453,19 +2263,120 @@ For your **${industry}** operations, the pain point **"${painPoint}"** represent
                       </select>
                     </div>
 
-                    <div className="space-y-1">
-                      <label className="text-[11px] font-mono text-slate-400 uppercase">3. Primary Corporate Pain Point</label>
-                      <select
-                        value={painPoint}
-                        onChange={(e) => setPainPoint(e.target.value)}
-                        className="w-full p-3 rounded-lg bg-slate-955 border border-slate-800 focus:border-emerald-500 text-sm text-slate-300 focus:outline-none"
-                      >
-                        <option value="Manual paperwork & delayed customer reply times">Manual paperwork & delayed customer reply times</option>
-                        <option value="Losing 40%+ inbound leads because of sluggish WhatsApp admin handling">Losing 40%+ inbound leads because of sluggish WhatsApp admin handling</option>
-                        <option value="Muddled student billing configurations and chaotic parent message chains">Muddled student billing configurations and chaotic parent message chains</option>
-                        <option value="No credible modern digital web presence to scale out high-ticket pricing">No credible modern digital web presence to scale out high-ticket pricing</option>
-                        <option value="No automated follow-ups or systematic invoice generation">No automated follow-ups or systematic invoice generation</option>
-                      </select>
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[11px] font-mono text-slate-400 uppercase">3. Primary Corporate Pain Point</label>
+                        {isListeningPain && (
+                          <span className="text-[10px] text-emerald-400 font-mono animate-pulse flex items-center gap-1.5 bg-emerald-500/10 px-2 py-0.5 rounded-full animate-fadeIn">
+                            <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-ping" />
+                            Listening...
+                          </span>
+                        )}
+                      </div>
+                      
+                      <div className="relative">
+                        <AnimatePresence>
+                          {isListeningPain && (
+                            <motion.button
+                              type="button"
+                              initial={{ opacity: 0, scale: 0.8, x: -10 }}
+                              animate={{ 
+                                opacity: [1, 0.85, 1],
+                                scale: [1, 1.06, 1],
+                                x: 0 
+                              }}
+                              exit={{ opacity: 0, scale: 0.8, x: -10 }}
+                              transition={{
+                                x: { type: "spring", stiffness: 350, damping: 30 },
+                                opacity: { repeat: Infinity, duration: 1.8, ease: "easeInOut" },
+                                scale: { repeat: Infinity, duration: 1.8, ease: "easeInOut" }
+                              }}
+                              whileHover={{ scale: 1.1 }}
+                              onClick={() => toggleSpeechRecognition("painPoint")}
+                              className="absolute left-2.5 top-[11px] flex items-center gap-1.5 bg-rose-500 text-[9px] text-white font-extrabold px-1.5 py-0.5 rounded tracking-widest font-mono z-20 shadow-lg shadow-rose-500/30 cursor-pointer hover:bg-rose-600 group transition-colors duration-200"
+                              title="Click to cancel recording"
+                            >
+                              <span className="w-1.5 h-1.5 bg-white rounded-full animate-ping group-hover:hidden" />
+                              <span className="group-hover:hidden">REC</span>
+                              <span className="hidden group-hover:inline-flex items-center gap-0.5">STOP ✕</span>
+                            </motion.button>
+                          )}
+                        </AnimatePresence>
+                        <AnimatePresence>
+                          {isListeningPain && (
+                            <motion.div 
+                              initial={{ opacity: 0, y: 5 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: 5 }}
+                              className="absolute left-16 right-10 bottom-1.5 h-5 flex items-end gap-[3px] pointer-events-none z-10 overflow-hidden"
+                            >
+                              {audioLevels.map((val, idx) => (
+                                <motion.div
+                                  key={idx}
+                                  animate={{ height: `${Math.max(15, val)}%` }}
+                                  transition={{ type: "spring", stiffness: 350, damping: 18 }}
+                                  className="flex-1 bg-gradient-to-t from-rose-600 via-pink-500 to-rose-400 rounded-t-[1px] shadow-[0_0_8px_rgba(239,68,68,0.4)]"
+                                />
+                              ))}
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                        <textarea
+                          required
+                          rows={2}
+                          placeholder={isListeningPain ? "Dictate bottleneck details..." : "Dictate with voice or type custom corporate barriers..."}
+                          value={painPoint}
+                          onChange={(e) => setPainPoint(e.target.value)}
+                          className={`w-full ${
+                            isListeningPain
+                              ? "pl-16 pb-[22px] pt-[10px] border-rose-500/50 ring-2 ring-rose-500/10 shadow-[0_0_15px_rgba(239,68,68,0.15)] bg-slate-950/90"
+                              : "pl-3 py-2.5 border-slate-800 hover:border-slate-700/80 focus:border-emerald-500"
+                          } pr-10 rounded-lg bg-slate-950 text-xs text-slate-300 focus:outline-none resize-none leading-relaxed transition-all duration-300`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => toggleSpeechRecognition("painPoint")}
+                          className={`absolute right-2 top-3 p-2 rounded-md transition-all flex items-center justify-center cursor-pointer ${
+                            isListeningPain
+                              ? "bg-rose-500/20 text-rose-400 animate-pulse"
+                              : "text-slate-500 hover:text-slate-300 hover:bg-slate-900"
+                          }`}
+                          title="Dictate bottleneck with voice input"
+                        >
+                          {isListeningPain ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+
+                      {/* Dynamic Selection Presets */}
+                      <div className="space-y-1.5">
+                        <span className="text-[9px] font-mono text-slate-500 uppercase tracking-wider block">Recommended Corporate Templates (or type custom):</span>
+                        <div className="flex flex-wrap gap-1.5 max-h-[120px] overflow-y-auto pr-1">
+                          {[
+                            "Manual paperwork & delayed customer reply times",
+                            "Losing 40%+ inbound leads because of sluggish WhatsApp admin handling",
+                            "Muddled student billing configurations and chaotic parent message chains",
+                            "No credible modern digital web presence to scale out high-ticket pricing",
+                            "No automated follow-ups or systematic invoice generation"
+                          ].map((preset) => {
+                            const isSelected = painPoint === preset;
+                            return (
+                              <button
+                                key={preset}
+                                type="button"
+                                onClick={() => setPainPoint(preset)}
+                                className={`text-[10px] text-left px-2 py-1.5 rounded transition border truncate max-w-full cursor-pointer ${
+                                  isSelected
+                                    ? "bg-emerald-500/15 border-emerald-500/35 text-emerald-400 font-medium"
+                                    : "bg-slate-950 border-slate-900 text-slate-400 hover:text-slate-200 hover:bg-slate-900"
+                                }`}
+                                title={preset}
+                              >
+                                {preset}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
@@ -1606,7 +2517,7 @@ For your **${industry}** operations, the pain point **"${painPoint}"** represent
               </div>
 
               {/* FAQ Filters & search bars */}
-              <div className="max-w-3xl mx-auto space-y-6">
+              <div className="max-w-3xl mx-auto space-y-4">
                 <div className="flex flex-col md:flex-row gap-3 items-center">
                   <div className="relative flex-1 w-full">
                     <input
@@ -1614,32 +2525,125 @@ For your **${industry}** operations, the pain point **"${painPoint}"** represent
                       placeholder="Search general questions (e.g., 'WhatsApp', 'Time', 'Cost')..."
                       value={faqSearch}
                       onChange={(e) => setFaqSearch(e.target.value)}
-                      className="w-full p-3 pl-10 rounded-xl bg-slate-900 border border-slate-800 text-slate-200 text-sm focus:outline-none focus:border-emerald-500"
+                      className={`w-full p-3 pl-10 rounded-xl border text-sm focus:outline-none focus:border-emerald-500 transition-colors ${
+                        theme === "dark" 
+                          ? "bg-slate-900 border-slate-800 text-slate-200" 
+                          : "bg-white border-slate-300 text-slate-800 focus:bg-slate-50"
+                      }`}
                     />
-                    <span className="absolute left-3.5 top-[15px] text-slate-500 font-mono">🔍</span>
+                    <span className="absolute left-3.5 top-[15px] text-slate-400 font-mono">🔍</span>
                   </div>
 
-                  <div className="flex bg-slate-900 rounded-xl p-1 border border-slate-800 w-full md:w-auto overflow-x-auto">
-                    {["All", "Web Dev", "AI Automation", "Pricing", "Trust & Delivery"].map(category => (
-                      <button
-                        key={category}
-                        onClick={() => setFaqCategory(category)}
-                        className={`px-4 py-1.5 text-xs font-semibold rounded-lg shrink-0 transition ${
-                          faqCategory === category
-                            ? "bg-slate-950 text-orange-400 border border-slate-800"
-                            : "text-slate-400 hover:text-slate-200"
-                        }`}
-                      >
-                        {category}
-                      </button>
-                    ))}
+                  <div className={`flex rounded-xl p-1 border w-full md:w-auto overflow-x-auto transition-colors ${
+                    theme === "dark" 
+                      ? "bg-slate-900 border-slate-800" 
+                      : "bg-white border-slate-200 shadow-sm"
+                  }`}>
+                    {["All", "Technical", "Billing", "General"].map(category => {
+                      const count = category === "All"
+                        ? localizedFaqs.length
+                        : localizedFaqs.filter(faq => faq.category === category).length;
+                      return (
+                        <button
+                          key={category}
+                          onClick={() => setFaqCategory(category)}
+                          className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg shrink-0 transition flex items-center gap-1.5 ${
+                            faqCategory === category
+                              ? theme === "dark"
+                                ? "bg-slate-950 text-orange-400 border border-slate-800"
+                                : "bg-orange-50 text-orange-600 border border-orange-200"
+                              : theme === "dark"
+                                ? "text-slate-400 hover:text-slate-200"
+                                : "text-slate-600 hover:text-slate-900"
+                          }`}
+                        >
+                          <span>{category}</span>
+                          <span className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${
+                            faqCategory === category
+                              ? theme === "dark"
+                                ? "bg-orange-400/15 text-orange-400"
+                                : "bg-orange-600/10 text-orange-600"
+                              : theme === "dark"
+                                ? "bg-slate-800 text-slate-550"
+                                : "bg-slate-100 text-slate-400"
+                          }`}>
+                            {count}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
-                {/* Accordions List */}
-                <div className="space-y-3">
+                {/* Trending Searches Row */}
+                <div className="flex flex-wrap items-center gap-2 px-1 text-xs">
+                  <span className="text-slate-500 font-mono text-[10px] font-bold uppercase tracking-wider">🔥 Trending Searches:</span>
+                  {trendingSearches.map((term, idx) => (
+                    <button
+                      key={term + idx}
+                      onClick={() => handleTrendingClick(term)}
+                      className={`px-2.5 py-1 rounded-full border text-[11px] font-semibold transition cursor-pointer ${
+                        theme === "dark"
+                          ? "bg-slate-900/40 border-slate-850 text-slate-400 hover:text-orange-400 hover:border-orange-500/40"
+                          : "bg-white border-slate-200 text-slate-650 hover:text-orange-500 hover:bg-slate-55"
+                      }`}
+                    >
+                      {term}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Copy FAQs tool bar */}
+              <div className="max-w-3xl mx-auto flex items-center justify-between px-1 bg-slate-900/10 border border-slate-800/20 rounded-xl p-2">
+                {isLoadingFaqs ? (
+                  <div className="flex items-center gap-2 text-xs text-orange-400 font-mono">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-orange-500"></span>
+                    </span>
+                    <span className="animate-pulse">AI Translator Working...</span>
+                  </div>
+                ) : (
+                  <div className="text-xs text-slate-500 font-mono">
+                    Showing {(() => {
+                      const filtered = localizedFaqs.filter(faq => {
+                        const matchesSearch = faq.question.toLowerCase().includes(faqSearch.toLowerCase()) || faq.answer.toLowerCase().includes(faqSearch.toLowerCase());
+                        const matchesCat = faqCategory === "All" || faq.category === faqCategory;
+                        return matchesSearch && matchesCat;
+                      });
+                      return filtered.length;
+                    })()} of {localizedFaqs.length} items
+                  </div>
+                )}
+                
+                <button
+                  type="button"
+                  onClick={handleCopyFAQs}
+                  className={`px-3 py-1 text-xs font-mono font-bold rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
+                    copiedFaqs
+                      ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                      : theme === "dark"
+                        ? "bg-slate-900 border-slate-800 text-slate-300 hover:text-white hover:border-slate-700"
+                        : "bg-white border-slate-200 text-slate-650 hover:text-slate-900 hover:bg-slate-50"
+                  }`}
+                >
+                  {copiedFaqs ? (
+                    <>
+                      <span>✓ FAQ MD Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>📋 Copy All FAQ (MD)</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Accordions List */}
+              <div className="space-y-3">
                   {(() => {
-                    const filtered = GENERAL_FAQS.filter(faq => {
+                    const filtered = localizedFaqs.filter(faq => {
                       const matchesSearch = faq.question.toLowerCase().includes(faqSearch.toLowerCase()) || faq.answer.toLowerCase().includes(faqSearch.toLowerCase());
                       const matchesCat = faqCategory === "All" || faq.category === faqCategory;
                       return matchesSearch && matchesCat;
@@ -1667,10 +2671,10 @@ For your **${industry}** operations, the pain point **"${painPoint}"** represent
                               animate={{ opacity: 1, y: 0 }}
                               exit={{ opacity: 0, y: -15 }}
                               transition={{ type: "spring", stiffness: 350, damping: 30 }}
-                              className={`rounded-xl overflow-hidden transition-all border ${
+                              className={`rounded-xl overflow-hidden transition-all duration-300 border ${
                                 theme === "dark" 
-                                  ? "bg-slate-900/40 border-slate-800 text-slate-100" 
-                                  : "bg-white border-slate-200 text-slate-800 shadow-sm"
+                                  ? "bg-slate-900/40 border-slate-800 text-slate-100 hover:border-orange-500/40 hover:shadow-[0_0_15px_rgba(249,115,22,0.06)] hover:scale-[1.012]" 
+                                  : "bg-white border-slate-200 text-slate-800 shadow-sm hover:border-orange-400 hover:shadow-[0_0_15px_rgba(249,115,22,0.04)] hover:scale-[1.012]"
                               }`}
                             >
                               <div
@@ -1740,8 +2744,7 @@ For your **${industry}** operations, the pain point **"${painPoint}"** represent
                     );
                   })()}
                 </div>
-              </div>
-            </section>
+              </section>
 
             <div className="laser-line max-w-7xl mx-auto" />
 
@@ -1983,6 +2986,141 @@ For your **${industry}** operations, the pain point **"${painPoint}"** represent
                 <div className="p-3 bg-slate-950 rounded-xl border border-slate-800/60 text-center">
                   <p className="text-xs text-slate-500 uppercase font-mono">Schema Status</p>
                   <p className="text-sm font-bold text-pink-400 mt-1">JSON-LD Instantiated</p>
+                </div>
+              </div>
+            </div>
+
+            {/* LEAD & INTERACTION ANALYTICS CONSOLE */}
+            <div id="telemetry-console-section" className={`p-6 md:p-8 rounded-2xl border transition-all space-y-6 scroll-mt-24 ${
+              theme === "dark" 
+                ? "bg-slate-900/60 border-slate-800 text-slate-100" 
+                : "bg-white border-slate-200 text-slate-800 shadow-md"
+            }`}>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <span className="text-xs font-mono text-orange-500 uppercase tracking-widest font-bold">REAL-TIME CONVERSION AUDIT CHANNEL</span>
+                  <h3 className={`text-xl md:text-3xl font-extrabold tracking-tight mt-1 ${theme === "dark" ? "text-white" : "text-slate-900"}`}>
+                    Lead & Interaction Analytics Console
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-1 max-w-xl">
+                    Performs automated telemetry tracking on external advisory interactions. Click the floating WhatsApp button to see new telemetry instances trigger live.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      const previous = [...whatsAppClickLogs];
+                      setWhatsAppClickLogs([]);
+                      addToast("Telemetry logs cleared.", "info", {
+                        label: "Undo",
+                        callback: () => {
+                          setWhatsAppClickLogs(previous);
+                          addToast("Telemetry logs restored!", "success");
+                        }
+                      });
+                    }}
+                    className="px-3 py-1.5 rounded-lg border border-red-500/30 text-red-500 hover:bg-red-500/10 text-xs font-mono transition flex items-center gap-1 cursor-pointer"
+                    title="Clear All Tracking Data"
+                  >
+                    Clear Logs
+                  </button>
+                  <button
+                    onClick={() => {
+                      const serviceName = getCurrentlyViewedService();
+                      const mockLog = {
+                        id: Math.random().toString(36).substring(2, 9),
+                        timestamp: new Date().toISOString().replace("T", " ").substring(0, 19),
+                        serviceViewed: serviceName,
+                        action: "Simulated Floating WhatsApp Consultation click",
+                        platform: "Simulated Sandbox Interface"
+                      };
+                      setWhatsAppClickLogs(prev => [mockLog, ...prev]);
+                      addToast("Simulated WhatsApp consultation click added!", "success");
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold transition flex items-center gap-1 cursor-pointer shadow-sm shadow-orange-500/10"
+                  >
+                    Simulate Clicks
+                  </button>
+                </div>
+              </div>
+
+              {/* High-level KPIs */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className={`p-4 rounded-xl border ${theme === "dark" ? "bg-slate-950/60 border-slate-850" : "bg-slate-50 border-slate-150"}`}>
+                  <p className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">Total Floating Clicks</p>
+                  <div className="flex items-baseline gap-2 mt-1">
+                    <span className="text-3xl font-black text-orange-500">
+                      {whatsAppClickLogs.length}
+                    </span>
+                    <span className="text-xs text-slate-400 font-mono">sessions recorded</span>
+                  </div>
+                </div>
+                <div className={`p-4 rounded-xl border ${theme === "dark" ? "bg-slate-950/60 border-slate-850" : "bg-slate-50 border-slate-150"}`}>
+                  <p className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">Most Tracked Context</p>
+                  <div className="mt-1">
+                    <span className="text-sm font-bold truncate block text-teal-400">
+                      {getMostPopularService()}
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-mono mt-0.5 block">leading high-intent capture</span>
+                  </div>
+                </div>
+                <div className={`p-4 rounded-xl border ${theme === "dark" ? "bg-slate-950/60 border-slate-850" : "bg-slate-50 border-slate-150"}`}>
+                  <p className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">Conversion Ratio SLA</p>
+                  <div className="flex items-baseline gap-2 mt-1">
+                    <span className="text-3xl font-black text-emerald-500">
+                      {whatsAppClickLogs.length > 0 ? "94.2%" : "0%"}
+                    </span>
+                    <span className="text-xs text-slate-400 font-mono font-bold text-slate-500">extreme interest</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Data Table */}
+              <div className={`border rounded-xl overflow-hidden ${theme === "dark" ? "border-slate-800 bg-slate-950/40" : "border-slate-200 bg-slate-50/50"}`}>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left font-mono text-xs border-collapse">
+                    <thead>
+                      <tr className={`border-b text-[10px] uppercase text-slate-400 tracking-wider ${theme === "dark" ? "border-slate-800 bg-slate-950" : "border-slate-200 bg-slate-100"}`}>
+                        <th className="p-3 font-semibold">Log ID</th>
+                        <th className="p-3 font-semibold">Timestamp</th>
+                        <th className="p-3 font-semibold">Service Context Being Viewed</th>
+                        <th className="p-3 font-semibold">Action Registered</th>
+                        <th className="p-3 font-semibold">Platform</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800">
+                      {whatsAppClickLogs.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="p-8 text-center text-slate-500 italic">
+                            No telemetry sequences generated yet. Try clicking the green floating WhatsApp widget in the bottom right corner!
+                          </td>
+                        </tr>
+                      ) : (
+                        whatsAppClickLogs.map((log) => (
+                          <tr 
+                            key={log.id} 
+                            className={`transition hover:bg-slate-550/5 ${theme === "dark" ? "text-slate-300 hover:bg-slate-900/40" : "text-slate-750 hover:bg-slate-100/60"}`}
+                          >
+                            <td className="p-3 font-bold text-orange-400">#{log.id}</td>
+                            <td className="p-3 text-slate-500">{log.timestamp}</td>
+                            <td className="p-3 font-semibold text-teal-400">
+                              {log.serviceViewed}
+                            </td>
+                            <td className="p-3 text-slate-400">{log.action}</td>
+                            <td className="p-3">
+                              <span className={`px-2 py-0.5 rounded text-[10px] border ${
+                                log.platform.includes("Mobile") 
+                                  ? "bg-purple-500/10 text-purple-400 border-purple-500/20" 
+                                  : "bg-cyan-500/10 text-cyan-400 border-cyan-500/20"
+                              }`}>
+                                {log.platform}
+                              </span>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
@@ -2388,6 +3526,33 @@ For your **${industry}** operations, the pain point **"${painPoint}"** represent
         </div>
       </footer>
 
+      {/* MOBILE STICKY CTA BAR - SLIDES UP past Hero scroll */}
+      <AnimatePresence>
+        {showMobileStickyCta && (
+          <motion.div
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 100, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 220, damping: 24 }}
+            className="fixed bottom-0 left-0 right-0 z-40 md:hidden bg-slate-900/95 border-t border-slate-800 p-4 shadow-xl backdrop-blur-md flex items-center justify-between gap-3"
+          >
+            <div className="flex flex-col text-left">
+              <span className="text-[9px] font-mono text-emerald-400 font-bold uppercase tracking-widest">Double-stack Track</span>
+              <p className="text-xs font-bold text-white font-sans">Direct Live Architect Call</p>
+            </div>
+            <a
+              onClick={() => logWhatsAppClick()}
+              href={getWhatsAppURL("Hello 3Cords System, I am viewing your mobile site and wish to schedule our free 15-day implementation audit & system design proposal.")}
+              target="_blank"
+              rel="noreferrer"
+              className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-slate-950 font-black text-xs uppercase tracking-wider rounded-lg transition-transform flex items-center gap-1.5 shadow-md shadow-emerald-500/20 cursor-pointer"
+            >
+              <span>Audit Now</span>
+              <span className="text-sm">💬</span>
+            </a>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* FLOATING AND STICKY WHATSAPP WHISPER WIDGET */}
       <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-2 pointer-events-none">
@@ -2399,6 +3564,7 @@ For your **${industry}** operations, the pain point **"${painPoint}"** represent
 
         {/* Pulsing trigger button */}
         <a
+          onClick={() => logWhatsAppClick()}
           href={getWhatsAppURL("Hello 3Cords System, I am viewing your beautiful elite Redesign Proposal. I would like to lock in a free system architecture review call for my business.")}
           target="_blank"
           rel="noreferrer"
@@ -2429,19 +3595,34 @@ For your **${industry}** operations, the pain point **"${painPoint}"** represent
         {toasts.map(toast => (
           <div
             key={toast.id}
-            className="pointer-events-auto bg-slate-900/95 border border-orange-500/40 text-white rounded-xl shadow-xl shadow-orange-950/25 p-4 flex items-center gap-3 animate-toast-in max-w-sm"
+            className="pointer-events-auto bg-slate-900/95 border border-orange-500/40 text-white rounded-xl shadow-xl shadow-orange-950/25 p-4 flex flex-col gap-2.5 animate-toast-in max-w-sm w-full"
           >
-            <div className="h-2 w-2 rounded-full bg-orange-500 animate-ping shrink-0" />
-            <div className="flex-grow text-xs">
-              <p className="font-bold text-orange-400 uppercase tracking-widest font-mono text-[9px] mb-0.5">SYSTEM BROADCAST</p>
-              <p className="text-slate-200 leading-normal">{toast.message}</p>
+            <div className="flex items-start gap-3 w-full">
+              <div className="h-2 w-2 rounded-full bg-orange-500 animate-ping shrink-0 mt-1.5" />
+              <div className="flex-grow text-xs">
+                <p className="font-bold text-orange-400 uppercase tracking-widest font-mono text-[9px] mb-0.5">SYSTEM BROADCAST</p>
+                <p className="text-slate-200 leading-normal text-start">{toast.message}</p>
+              </div>
+              <button 
+                onClick={() => setToasts(prev => prev.filter(t => t.id !== toast.id))}
+                className="text-slate-500 hover:text-white text-xs pl-2 font-mono shrink-0 cursor-pointer"
+              >
+                ✕
+              </button>
             </div>
-            <button 
-              onClick={() => setToasts(prev => prev.filter(t => t.id !== toast.id))}
-              className="text-slate-500 hover:text-white text-xs pl-2 font-mono shrink-0 cursor-pointer"
-            >
-              ✕
-            </button>
+            {toast.action && (
+              <div className="flex justify-end border-t border-slate-800/40 pt-2 w-full">
+                <button
+                  onClick={() => {
+                    toast.action?.callback();
+                    setToasts(prev => prev.filter(t => t.id !== toast.id));
+                  }}
+                  className="px-2.5 py-1 text-[10px] font-mono font-black uppercase tracking-wider bg-orange-500/20 text-orange-400 hover:bg-orange-500 hover:text-slate-950 rounded border border-orange-500/30 transition cursor-pointer"
+                >
+                  {toast.action.label}
+                </button>
+              </div>
+            )}
           </div>
         ))}
       </div>

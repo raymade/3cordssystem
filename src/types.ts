@@ -49,5 +49,5 @@ export interface CompetitorItem {
 export interface FAQItem {
   question: string;
   answer: string;
-  category: "AI Automation" | "Web Dev" | "Pricing" | "Trust & Delivery";
+  category: "Technical" | "Billing" | "General";
 }
